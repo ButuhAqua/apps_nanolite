@@ -41,9 +41,13 @@ return new class extends Migration
             // Jumlah produk & point reward
             $table->boolean('program_enabled')->default(false);
             $table->foreignId('customer_program_id')->nullable()->constrained('customer_programs')->nullOnDelete();
-            $table->integer('jumlah_program')->default(0);
+            $table->integer('jumlah_program')
+                    ->default(0)
+                    ->nullable();
             $table->boolean('reward_enabled')->default(false);
-            $table->string('reward_point')->nullable();
+            $table->string('reward_point')
+                    ->default(0)
+                    ->nullable();
 
             // Harga total
             $table->decimal('total_harga', 15, 2)->default(0);

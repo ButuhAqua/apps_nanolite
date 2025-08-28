@@ -36,29 +36,29 @@ class OrderTransformer extends JsonResource
             default    => ucfirst((string)$this->status),
         };
 
-        $alamatReadable   = $this->mapAddressesReadable($this->address);
-        $productsReadable = $this->mapProductsReadable($this->products);
+        // ✅ alamat: dukung bentuk array (repeater) & string (teks bebas)
+        [$alamatReadable, $alamatText] = $this->normalizeAddress($this->address);
 
         return [
-            'no_order'             => $this->no_order,
-            'department'           => $this->department?->name ?? '-',
-            'employee'             => $this->employee?->name ?? '-',
+            'no_order'               => $this->no_order,
+            'department'             => $this->department?->name ?? '-',
+            'employee'               => $this->employee?->name ?? '-',
 
             // Relasi customer & kategori
-            'customer_id'          => $this->customer?->id ?? null,
-            'customer'             => $this->customer?->name ?? '-',
-            'customer_category_id' => $this->customer?->customer_category_id ?? null,
-            'customer_category'    => $this->customerCategory?->name ?? '-',
-            'customer_program_id'  => $this->customerProgram?->id ?? null,
-            'customer_program'     => $this->customerProgram?->name ?? null,
+            'customer_id'            => $this->customer?->id ?? null,
+            'customer'               => $this->customer?->name ?? '-',
+            'customer_category_id'   => $this->customer?->customer_category_id ?? null,
+            'customer_category'      => $this->customerCategory?->name ?? '-',
+            'customer_program_id'    => $this->customerProgram?->id ?? null,
+            'customer_program'       => $this->customerProgram?->name ?? null,
 
             // Kontak
-            'phone'                => $this->customer?->phone ?? $this->phone,
-            'address_text'         => $this->addressText($alamatReadable),
-            'address_detail'       => $alamatReadable,
+            'phone'                  => $this->customer?->phone ?? $this->phone,
+            'address_text'           => $alamatText,     // ✅ kini aman utk string/address repeater
+            'address_detail'         => $alamatReadable, // ✅ array detail jika ada
 
             // Produk
-            'products'             => $productsReadable,
+            'products'               => $this->mapProductsReadable($this->products),
 
             // Diskon
             'diskon' => [
@@ -80,23 +80,62 @@ class OrderTransformer extends JsonResource
             ],
 
             // Status & pembayaran
-            'payment_method'       => $this->payment_method === 'tempo' ? 'Tempo' : 'Cash',
-            'status_pembayaran'    => $statusPembayaranLabel,
-            'status'               => $statusLabel,
+            'payment_method'         => $this->payment_method === 'tempo' ? 'Tempo' : 'Cash',
+            'status_pembayaran'      => $statusPembayaranLabel,
+            'status'                 => $statusLabel,
 
             // Total harga
-            'total_harga'          => (int)($this->total_harga ?? 0),
-            'total_harga_after_tax'=> (int)($this->total_harga_after_tax ?? 0),
+            'total_harga'            => (int)($this->total_harga ?? 0),
+            'total_harga_after_tax'  => (int)($this->total_harga_after_tax ?? 0),
 
             // File unduhan
-            'invoice_pdf_url'      => $this->order_file  ? Storage::url($this->order_file)  : null,
-           
-            'created_at'           => optional($this->created_at)->format('d/m/Y'),
-            'updated_at'           => optional($this->updated_at)->format('d/m/Y'),
+            'invoice_pdf_url'        => $this->order_file ? Storage::url($this->order_file) : null,
+
+            'created_at'             => optional($this->created_at)->format('d/m/Y'),
+            'updated_at'             => optional($this->updated_at)->format('d/m/Y'),
         ];
     }
 
-    /* ---------------- Helpers ---------------- */
+    /* ---------------- Address helpers ---------------- */
+
+    /**
+     * Kembalikan [address_detail(array), address_text(string)]
+     */
+    private function normalizeAddress($address): array
+    {
+        // Jika address sudah array (hasil repeater), process seperti biasa
+        if (is_array($address)) {
+            $detail = $this->mapAddressesReadable($address);
+            return [$detail, $this->addressText($detail)];
+        }
+
+        // Jika object JSON string
+        if (is_string($address)) {
+            // Kalau string sebenarnya JSON array (mis. dari cast), coba decode
+            $decoded = json_decode($address, true);
+            if (is_array($decoded)) {
+                $detail = $this->mapAddressesReadable($decoded);
+                return [$detail, $this->addressText($detail)];
+            }
+
+            // ✅ Kalau benar-benar string biasa (alamat bebas)
+            $trim = trim($address);
+            if ($trim !== '') {
+                $detail = [[
+                    'detail_alamat' => $trim,
+                    'provinsi'      => ['code' => null, 'name' => null],
+                    'kota_kab'      => ['code' => null, 'name' => null],
+                    'kecamatan'     => ['code' => null, 'name' => null],
+                    'kelurahan'     => ['code' => null, 'name' => null],
+                    'kode_pos'      => null,
+                ]];
+                return [$detail, $trim];
+            }
+        }
+
+        // Fallback: tidak ada alamat
+        return [[], null];
+    }
 
     private function addressText(array $items): ?string
     {
@@ -110,8 +149,9 @@ class OrderTransformer extends JsonResource
                 $a['provinsi']['name'] ?? null,
                 $a['kode_pos'] ?? null,
             ];
-            return implode(', ', array_filter($parts));
-        })->join(' | ');
+            $parts = array_filter($parts, fn ($v) => !is_null($v) && trim((string)$v) !== '');
+            return implode(', ', $parts);
+        })->filter()->join(' | ');
     }
 
     private function mapAddressesReadable($address): array
@@ -120,14 +160,21 @@ class OrderTransformer extends JsonResource
         if (!is_array($items)) $items = [];
 
         return array_map(function ($a) {
-            $provCode = $a['provinsi']  ?? null;
-            $kabCode  = $a['kota_kab']  ?? null;
-            $kecCode  = $a['kecamatan'] ?? null;
-            $kelCode  = $a['kelurahan'] ?? null;
+            // dukung dua skema key: (provinsi/kota_kab/...) atau (provinsi_code/kota_kab_code/...)
+            $provCode = $a['provinsi']       ?? $a['provinsi_code']   ?? null;
+            $kabCode  = $a['kota_kab']       ?? $a['kota_kab_code']   ?? null;
+            $kecCode  = $a['kecamatan']      ?? $a['kecamatan_code']  ?? null;
+            $kelCode  = $a['kelurahan']      ?? $a['kelurahan_code']  ?? null;
+
+            // Jika value berupa array {code,name}, ambil code-nya
+            $provCode = is_array($provCode) ? ($provCode['code'] ?? null) : $provCode;
+            $kabCode  = is_array($kabCode)  ? ($kabCode['code'] ?? null)  : $kabCode;
+            $kecCode  = is_array($kecCode)  ? ($kecCode['code'] ?? null)  : $kecCode;
+            $kelCode  = is_array($kelCode)  ? ($kelCode['code'] ?? null)  : $kelCode;
 
             return [
                 'detail_alamat' => $a['detail_alamat'] ?? null,
-                'provinsi'      => ['code' => $provCode, 'name' => $this->nameFromCode(Provinsi::class, $provCode)],
+                'provinsi'      => ['code' => $provCode, 'name' => $this->nameFromCode(Provinsi::class,  $provCode)],
                 'kota_kab'      => ['code' => $kabCode,  'name' => $this->nameFromCode(Kabupaten::class, $kabCode)],
                 'kecamatan'     => ['code' => $kecCode,  'name' => $this->nameFromCode(Kecamatan::class, $kecCode)],
                 'kelurahan'     => ['code' => $kelCode,  'name' => $this->nameFromCode(Kelurahan::class, $kelCode)],
@@ -158,13 +205,18 @@ class OrderTransformer extends JsonResource
                 ? Product::with(['brand:id,name', 'category:id,name'])->find($p['produk_id'])
                 : null;
 
-            // Ambil warna dari JSON product->colors
-        $colorName = null;
-        if ($product && !empty($p['warna_id'])) {
-            $colors = collect($product->colors ?? []);
-            $colorObj = $colors->firstWhere('id', $p['warna_id']);
-            $colorName = $colorObj['name'] ?? $p['warna_id'];
-        }
+            // Warna dari JSON product->colors (boleh id atau name)
+            $colorName = null;
+            if ($product && !empty($p['warna_id'])) {
+                $colors = collect($product->colors ?? []);
+                $color  = $colors->first(function ($c) use ($p) {
+                    if (is_array($c)) {
+                        return ($c['id'] ?? null) == $p['warna_id'] || ($c['name'] ?? null) == $p['warna_id'];
+                    }
+                    return $c == $p['warna_id'];
+                });
+                $colorName = is_array($color) ? ($color['name'] ?? null) : ($color ?: null);
+            }
 
             return [
                 'brand'    => $product?->brand?->name ?? null,

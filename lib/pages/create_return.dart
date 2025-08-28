@@ -142,7 +142,7 @@ class _CreateReturnScreenState extends State<CreateReturnScreen> {
     setState(() {
       _custId = cust.id;
       _selectedCustomer = cust;
-      _phoneCtrl.text = cust.phone;
+      _phoneCtrl.text = cust.phone ?? '';
       _addrCtrl.text = cust.alamatDisplay;
     });
   }

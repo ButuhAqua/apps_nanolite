@@ -64,6 +64,7 @@ class Order extends Model
         'program_enabled'        => 'boolean',
         'reward_enabled'         => 'boolean',
         'jumlah_program'         => 'integer',
+        'reward_point'            => 'integer',
         'total_harga'            => 'integer',
         'total_harga_after_tax'  => 'integer',
         'status'                 => 'string',

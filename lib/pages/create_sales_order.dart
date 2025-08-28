@@ -11,7 +11,7 @@ class CreateSalesOrderScreen extends StatefulWidget {
 }
 
 class _CreateSalesOrderScreenState extends State<CreateSalesOrderScreen> {
-  // Toggles
+   // Toggles
   bool _rewardAktif = false;
   bool _programAktif = false;
   bool _diskonAktif = false;
@@ -24,9 +24,9 @@ class _CreateSalesOrderScreenState extends State<CreateSalesOrderScreen> {
   int? _programId; // opsional
 
   // Payment & status
-  String _paymentMethod = 'cash'; // cash/transfer/tempo
-  String _statusPembayaran = 'belum bayar'; // sudah bayar/belum bayar
-  String _statusOrder = 'pending'; // pending/processing/completed/cancelled
+  String _paymentMethod = 'cash';
+  String _statusPembayaran = 'belum bayar';
+  String _statusOrder = 'pending';
 
   // Controllers
   final _phoneCtrl = TextEditingController();
@@ -35,7 +35,10 @@ class _CreateSalesOrderScreenState extends State<CreateSalesOrderScreen> {
   final _diskon2Ctrl = TextEditingController(text: '0');
   final _penjelasanDiskon1Ctrl = TextEditingController();
   final _penjelasanDiskon2Ctrl = TextEditingController();
-  final _programCtrl = TextEditingController(); // display program (read-only)
+  final _programCtrl = TextEditingController();
+  final _rewardCtrl = TextEditingController();
+  final _poinprogramCtrl = TextEditingController();
+  
 
   // Data Customers
   List<OptionItem> _customers = [];
@@ -48,6 +51,45 @@ class _CreateSalesOrderScreenState extends State<CreateSalesOrderScreen> {
   int _totalAfter = 0;
 
   bool _submitting = false;
+
+  // ================== 🔥 Helper Filtering ==================
+
+  Future<List<OptionItem>> _getFilteredCategories() async {
+    final cats = await ApiService.fetchCustomerCategories();
+    final allCustomers = await ApiService.fetchCustomersDropdown();
+
+    if (_empId == null) return cats;
+
+    final kategoriIds = allCustomers
+        .where((c) => c.employeeId == _empId) // employee cocok
+        .map((c) => c.categoryId)
+        .whereType<int>()
+        .toSet();
+
+    return cats.where((cat) => kategoriIds.contains(cat.id)).toList();
+  }
+
+  Future<List<OptionItem>> _getFilteredPrograms() async {
+  return ApiService.fetchCustomerPrograms(
+    employeeId: _empId,
+    categoryId: _categoryId,
+  );
+}
+
+
+  Future<void> _loadCustomers() async {
+    final allCustomers = await ApiService.fetchCustomersDropdown();
+
+    final filtered = allCustomers.where((c) {
+      final matchDept = _deptId == null || c.departmentId == _deptId;
+      final matchEmp  = _empId == null || c.employeeId == _empId;
+      final matchCat  = _categoryId == null || c.categoryId == _categoryId;
+      return matchDept && matchEmp && matchCat;
+    }).toList();
+
+    setState(() => _customers = filtered);
+  }
+
 
   @override
   void dispose() {
@@ -92,18 +134,12 @@ class _CreateSalesOrderScreenState extends State<CreateSalesOrderScreen> {
     });
   }
 
-  Future<void> _loadCustomers() async {
-    if (_deptId == null || _empId == null || _categoryId == null) {
-      setState(() => _customers = []);
-      return;
-    }
-    final list = await ApiService.fetchCustomersFiltered(
-      departmentId: _deptId!,
-      employeeId: _empId!,
-      categoryId: _categoryId!,
-    );
-    setState(() => _customers = list);
-  }
+  @override
+void initState() {
+  super.initState();
+  _loadCustomers(); // 🔥 isi data awal
+}
+
 
   String _formatRp(int n) {
     final s = n.toString();
@@ -174,13 +210,20 @@ class _CreateSalesOrderScreenState extends State<CreateSalesOrderScreen> {
                             value: _empId,
                             width: fieldWidth,
                             onChanged: (v) {
-                              setState(() => _empId = v);
-                              _loadCustomers();
+                              setState(() {
+                                _empId = v;
+                                _categoryId = null;
+                                _customerId = null;
+                              });
                             },
                           ),
+
+
                           _dropdownFuture(
                             label: 'Kategori Customer *',
-                            future: ApiService.fetchCustomerCategories(),
+                            future: _empId != null
+                                ? ApiService.fetchCustomerCategories(employeeId: _empId!)
+                                : Future.value([]),
                             value: _categoryId,
                             width: fieldWidth,
                             onChanged: (v) {
@@ -188,49 +231,39 @@ class _CreateSalesOrderScreenState extends State<CreateSalesOrderScreen> {
                                 _categoryId = v;
                                 _customerId = null;
                               });
-                              _loadCustomers();
                             },
                           ),
 
-                          // Customer
-                          SizedBox(
+                          _dropdownFuture(
+                            label: 'Customer *',
+                            future: (_empId != null && _categoryId != null && _deptId != null)
+                                ? ApiService.fetchCustomersFiltered(
+                                    employeeId: _empId!,
+                                    categoryId: _categoryId!,
+                                    departmentId: _deptId!,
+                                  )
+                                : Future.value([]),
+                            value: _customerId,
                             width: fieldWidth,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text('Customer *', style: TextStyle(color: Colors.white)),
-                                const SizedBox(height: 6),
-                                DropdownButtonFormField<int>(
-                                  value: _customerId,
-                                  items: _customers
-                                      .map((c) => DropdownMenuItem<int>(value: c.id, child: Text(c.name)))
-                                      .toList(),
-                                  onChanged: (v) {
-                                    setState(() {
-                                      _customerId = v;
-                                      final c = _customers.firstWhere(
-                                        (e) => e.id == v,
-                                        orElse: () => OptionItem(id: 0, name: '-', address: '-', phone: '', programName: '-', programId: null),
-                                      );
-                                      _phoneCtrl.text   = c.phone ?? '';
-                                      _addressCtrl.text = c.address ?? '';
-                                      _programCtrl.text = c.programName ?? '-';
-                                      _programId        = c.programId;
-                                    });
-                                  },
-                                  decoration: InputDecoration(
-                                    filled: true,
-                                    fillColor: const Color(0xFF22344C),
-                                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                                  ),
-                                  dropdownColor: Colors.grey[900],
-                                  iconEnabledColor: Colors.white,
-                                  style: const TextStyle(color: Colors.white),
-                                ),
-                              ],
-                            ),
+                           onChanged: (v) async {
+                              setState(() => _customerId = v);
+                              if (v != null) {
+                                try {
+                                  final cust = await ApiService.fetchCustomerDetail(v);
+                                  setState(() {
+                                    _phoneCtrl.text   = cust.phone ?? '';
+                                  _addressCtrl.text = cust.alamatDisplay;
+                                    _programCtrl.text = cust.programName ?? '-';
+                                    _programId        = cust.programId;
+                                  });
+                                } catch (e) {
+                                  _notify("Gagal ambil detail customer", color: Colors.red);
+                                }
+                              }
+                            },
                           ),
+
+                         
 
                           _darkTextField(
                             label: 'Phone *',
@@ -244,12 +277,27 @@ class _CreateSalesOrderScreenState extends State<CreateSalesOrderScreen> {
                             maxLines: 2,
                           ),
 
+                          
+                         _darkTextField(
+                            label: 'Poin Reward',
+                            width: fieldWidth,
+                            controller: _rewardCtrl,
+                            hint: '0',
+                            enabled: _rewardAktif,
+                          ),
                           // Reward & Program toggles
                           _switchTile(
                             width: fieldWidth,
                             title: 'Reward',
                             value: _rewardAktif,
                             onChanged: (v) => setState(() => _rewardAktif = v),
+                          ),
+                           _darkTextField(
+                            label: 'Poin Program',
+                            width: fieldWidth,
+                            controller: _poinprogramCtrl,
+                            hint: '0',
+                            enabled: _programAktif,
                           ),
                           _switchTile(
                             width: fieldWidth,
@@ -259,10 +307,10 @@ class _CreateSalesOrderScreenState extends State<CreateSalesOrderScreen> {
                           ),
 
                           _darkTextField(
-                            label: 'Program Pelanggan',
+                            label: 'Program Customer',
                             width: fieldWidth,
-                            controller: _programCtrl,
-                            enabled: false,
+                            controller: _programCtrl, 
+                            enabled: false,          
                           ),
 
                           // Diskon
@@ -275,6 +323,7 @@ class _CreateSalesOrderScreenState extends State<CreateSalesOrderScreen> {
                               _recomputeTotals();
                             },
                           ),
+                          
                           _darkTextField(
                             label: 'Diskon 1 (%)',
                             width: fieldWidth,
@@ -306,18 +355,17 @@ class _CreateSalesOrderScreenState extends State<CreateSalesOrderScreen> {
                             enabled: _diskonAktif,
                           ),
 
-                          // Pembayaran & status
                           _darkDropdown<String>(
                             label: 'Metode Pembayaran *',
                             width: fieldWidth,
                             value: _paymentMethod,
                             items: const [
                               DropdownMenuItem(value: 'cash', child: Text('Cash')),
-                              DropdownMenuItem(value: 'transfer', child: Text('Transfer')),
                               DropdownMenuItem(value: 'tempo', child: Text('Tempo')),
                             ],
                             onChanged: (v) => setState(() => _paymentMethod = v ?? 'cash'),
                           ),
+
                           _darkDropdown<String>(
                             label: 'Status Pembayaran *',
                             width: fieldWidth,
@@ -447,37 +495,40 @@ class _CreateSalesOrderScreenState extends State<CreateSalesOrderScreen> {
                       onChanged: (v) => setState(() => it.brandId = v),
                     ),
                     _dropdownFuture(
-                      label: 'Kategori *',
-                      future: ApiService.fetchProductCategories(),
-                      value: it.kategoriId,
-                      width: itemWidth,
-                      onChanged: (v) => setState(() => it.kategoriId = v),
-                    ),
-                    _dropdownFuture(
-                      label: 'Produk *',
-                      future: ApiService.fetchProducts(),
-                      value: it.produkId,
-                      width: itemWidth,
-                      onChanged: (v) async {
-                        setState(() {
-                          it.produkId = v;
+                        label: 'Kategori *',
+                        future: it.brandId != null 
+                            ? ApiService.fetchCategoriesByBrand(it.brandId!)
+                            : Future.value([]),
+                        value: it.kategoriId,
+                        width: itemWidth,
+                        onChanged: (v) => setState(() {
+                          it.kategoriId = v;
+                          it.produkId = null;
                           it.warnaId = null;
-                          it.availableColors = const [];
-                          it.hargaPerProduk = null;
-                        });
+                        }),
+                      ),
 
-                        if (v != null) {
-                          final cols = await ApiService.fetchColorsByProduct(v);
-                          final price = await ApiService.fetchProductPrice(v);
-
+                      _dropdownFuture(
+                        label: 'Produk *',
+                        future: (it.brandId != null && it.kategoriId != null)
+                            ? ApiService.fetchProductsByBrandCategory(it.brandId!, it.kategoriId!)
+                            : Future.value([]),
+                        value: it.produkId,
+                        width: itemWidth,
+                        onChanged: (v) async {
                           setState(() {
-                            it.availableColors = cols;
-                            it.hargaPerProduk = price;
+                            it.produkId = v;
+                            it.warnaId = null;
+                            it.availableColors = [];
                           });
-                          _recomputeTotals();
-                        }
-                      },
-                    ),
+                          if (v != null) {
+                            it.availableColors = await ApiService.fetchColorsByProductFiltered(v);
+                            it.hargaPerProduk  = await ApiService.fetchProductPrice(v);
+                            _recomputeTotals();
+                          }
+                        },
+                      ),
+
 
                     // Warna
                     SizedBox(
@@ -595,49 +646,69 @@ class _CreateSalesOrderScreenState extends State<CreateSalesOrderScreen> {
   }
 
   Widget _dropdownFuture({
-    required String label,
-    required Future<List<OptionItem>> future,
-    required int? value,
-    required double width,
-    required ValueChanged<int?> onChanged,
-    bool enabled = true,
-  }) {
-    return SizedBox(
-      width: width,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: const TextStyle(color: Colors.white)),
-          const SizedBox(height: 6),
-          FutureBuilder<List<OptionItem>>(
-            future: future,
-            builder: (context, snapshot) {
-              if (!snapshot.hasData) {
-                return const SizedBox(height: 48, child: Center(child: CircularProgressIndicator()));
-              }
-              final items = snapshot.data!;
-              return DropdownButtonFormField<int>(
-                value: value,
-                items: items
-                    .map((opt) => DropdownMenuItem(value: opt.id, child: Text(opt.name)))
-                    .toList(),
-                onChanged: enabled ? onChanged : null,
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: const Color(0xFF22344C),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                ),
-                dropdownColor: Colors.grey[900],
-                iconEnabledColor: Colors.white,
-                style: const TextStyle(color: Colors.white),
+  required String label,
+  required Future<List<OptionItem>> future,
+  required int? value,
+  required double width,
+  required ValueChanged<int?> onChanged,
+  bool enabled = true,
+}) {
+  return SizedBox(
+    width: width,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(color: Colors.white)),
+        const SizedBox(height: 6),
+        FutureBuilder<List<OptionItem>>(
+          future: future,
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) {
+              return const SizedBox(
+                height: 48,
+                child: Center(child: CircularProgressIndicator()),
               );
-            },
-          ),
-        ],
-      ),
-    );
-  }
+            }
+            final items = snapshot.data!;
+
+           
+            final safeValue = (value != null && items.any((e) => e.id == value))
+                ? value
+                : null;
+
+            return DropdownButtonFormField<int>(
+              isExpanded: true,
+              value: safeValue,
+              items: items
+                  .map((opt) => DropdownMenuItem(
+                        value: opt.id,
+                        child: Text(
+                          opt.name,
+                          maxLines: 2, // boleh 2 baris
+                          overflow: TextOverflow.ellipsis,
+                          softWrap: true,
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ))
+                  .toList(),
+              onChanged: enabled ? onChanged : null,
+              decoration: InputDecoration(
+                filled: true,
+                fillColor: const Color(0xFF22344C),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              ),
+              dropdownColor: Colors.grey[900],
+              iconEnabledColor: Colors.white,
+              style: const TextStyle(color: Colors.white),
+            );
+          },
+        ),
+      ],
+    ),
+  );
+}
+
 
   Widget _darkTextField({
     required String label,
@@ -783,6 +854,7 @@ class _CreateSalesOrderScreenState extends State<CreateSalesOrderScreen> {
     try {
       final d1 = double.tryParse(_diskon1Ctrl.text.replaceAll(',', '.')) ?? 0.0;
       final d2 = double.tryParse(_diskon2Ctrl.text.replaceAll(',', '.')) ?? 0.0;
+  
 
       final ok = await ApiService.createOrder(
         companyId: 1, // sesuaikan
@@ -795,6 +867,8 @@ class _CreateSalesOrderScreenState extends State<CreateSalesOrderScreen> {
         addressText: _addressCtrl.text.trim(),
         programEnabled: _programAktif,
         rewardEnabled: _rewardAktif,
+        rewardPoint: int.tryParse(_rewardCtrl.text) ?? 0,
+        programPoint: int.tryParse(_poinprogramCtrl.text) ?? 0,
         diskon1: d1,
         diskon2: d2,
         penjelasanDiskon1: _penjelasanDiskon1Ctrl.text.trim().isEmpty ? null : _penjelasanDiskon1Ctrl.text.trim(),

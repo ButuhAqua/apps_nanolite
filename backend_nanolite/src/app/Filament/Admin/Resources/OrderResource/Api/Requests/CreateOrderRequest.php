@@ -8,7 +8,7 @@ class CreateOrderRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true; // bisa diatur pakai policy kalau perlu
+        return true;
     }
 
     public function rules(): array
@@ -21,6 +21,20 @@ class CreateOrderRequest extends FormRequest
             'customer_id'            => ['required', 'integer', 'exists:customers,id'],
             'customer_categories_id' => ['nullable', 'integer', 'exists:customer_categories,id'],
             'customer_program_id'    => ['nullable', 'integer', 'exists:customer_programs,id'],
+
+            /* ================= KONTAK/ALAMAT ========== */
+            // ✅ TERBARU: terima alamat sebagai string (teks bebas dari mobile) ATAU array (format repeater)
+            'address'                => ['nullable'], // biarkan fleksibel; bisa string atau array
+            // Jika suatu saat kirim array, boleh aktifkan validasi detail-nya:
+            // 'address'                     => ['nullable', 'array'],
+            // 'address.*.provinsi_code'     => ['nullable', 'string'],
+            // 'address.*.kota_kab_code'     => ['nullable', 'string'],
+            // 'address.*.kecamatan_code'    => ['nullable', 'string'],
+            // 'address.*.kelurahan_code'    => ['nullable', 'string'],
+            // 'address.*.kode_pos'          => ['nullable', 'string'],
+            // 'address.*.detail_alamat'     => ['nullable', 'string'],
+
+            'phone'                 => ['required', 'string'],
 
             /* ================= PRODUK ================= */
             'products'               => ['required', 'array', 'min:1'],

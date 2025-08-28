@@ -76,10 +76,26 @@ class ProductReturnResource extends Resource
                     })
                     ->required()->searchable()->preload()->placeholder('Pilih Karyawan'),
 
-                Select::make('customer_categories_id')->label('Kategori Customer')->reactive()
+
+                Select::make('customer_categories_id')
+                    ->label('Kategori Customer')
+                    ->reactive()
                     ->afterStateUpdated(fn($state, callable $set) => $set('customer_id', null))
-                    ->options(fn () => CustomerCategories::pluck('name', 'id'))
-                    ->required()->searchable()->preload()->placeholder('Pilih Kategori Customer'),
+                    ->options(function (callable $get) {
+                        $employeeId = $get('employee_id');
+                        if (!$employeeId) {
+                            return [];
+                        }
+
+                        return CustomerCategories::whereHas('customers', function ($q) use ($employeeId) {
+                                $q->where('employee_id', $employeeId);
+                            })
+                            ->pluck('name', 'id');
+                    })
+                    ->required()
+                    ->searchable()
+                    ->preload()
+                    ->placeholder('Pilih Kategori Customer'),
 
                 Select::make('customer_id')->label('Customer')->reactive()
                     ->options(function (callable $get) {

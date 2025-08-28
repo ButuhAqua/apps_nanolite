@@ -172,7 +172,7 @@ class CustomerResource extends Resource
                 ->default('pending')->visibleOn('edit')->searchable()->required(),
 
             Select::make('status')
-                ->label('Status Akun')
+                ->label('Status')
                 ->options([
                     'pending' => 'Pending',
                     'active'     => 'Aktif',
@@ -242,7 +242,7 @@ class CustomerResource extends Resource
                     ])->sortable(),
 
                 BadgeColumn::make('status')
-                    ->label('Status Akun')
+                    ->label('Status')
                     ->formatStateUsing(fn(string $state): string => match($state) {
                         'pending'    => 'Pending',
                         'active'     => 'Aktif',

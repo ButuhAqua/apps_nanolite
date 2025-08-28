@@ -10,12 +10,12 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Maatwebsite\Excel\Facades\Excel;
 use App\Exports\GaransiExport;
 use Illuminate\Support\Str;
-use App\Models\Concerns\OwnedByEmployee; // ⬅️ tambah
-use App\Models\Concerns\LatestFirst; 
+use App\Models\Concerns\OwnedByEmployee;
+use App\Models\Concerns\LatestFirst;
 
 class Garansi extends Model
 {
-    use HasFactory, OwnedByEmployee, LatestFirst; // ⬅️ tambah
+    use HasFactory, OwnedByEmployee, LatestFirst;
 
     protected $fillable = [
         'no_garansi',
@@ -58,7 +58,14 @@ class Garansi extends Model
     protected static function booted()
     {
         static::creating(function (Garansi $garansi) {
+            // jika image dikirim base64, simpan ke storage dan ganti jadi path
+            self::consumeImageString($garansi);
             $garansi->no_garansi = 'GAR-' . now()->format('Ymd') . strtoupper(Str::random(4));
+        });
+
+        static::saving(function (Garansi $garansi) {
+            // berjaga-jaga kalau update
+            self::consumeImageString($garansi);
         });
 
         static::saved(function (Garansi $garansi) {
@@ -73,6 +80,32 @@ class Garansi extends Model
             Excel::store(new GaransiExport($garansi), $excelFileName, 'public');
             $garansi->updateQuietly(['garansi_excel' => $excelFileName]);
         });
+    }
+
+    /**
+     * Jika kolom image berisi data URI base64, simpan ke disk dan set jadi path file.
+     */
+    protected static function consumeImageString(Garansi $garansi): void
+    {
+        $img = (string) ($garansi->image ?? '');
+        if ($img === '') return;
+
+        // Jika sudah URL http/https, biarkan
+        if (str_starts_with($img, 'http://') || str_starts_with($img, 'https://')) {
+            return;
+        }
+
+        // Data URI? "data:image/png;base64,AAAA..."
+        if (preg_match('/^data:image\/([a-zA-Z0-9.+-]+);base64,/', $img, $m)) {
+            $ext = strtolower($m[1] ?? 'png');
+            $data = substr($img, strpos($img, ',') + 1);
+            $bin  = base64_decode($data, true);
+            if ($bin === false) return;
+
+            $name = 'garansi-photos/' . now()->format('Ymd_His') . '_' . Str::random(8) . '.' . $ext;
+            Storage::disk('public')->put($name, $bin);
+            $garansi->image = $name;
+        }
     }
 
     public function productsWithDetails(): array
