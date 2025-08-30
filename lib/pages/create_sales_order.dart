@@ -11,7 +11,7 @@ class CreateSalesOrderScreen extends StatefulWidget {
 }
 
 class _CreateSalesOrderScreenState extends State<CreateSalesOrderScreen> {
-   // Toggles
+  // Toggles
   bool _rewardAktif = false;
   bool _programAktif = false;
   bool _diskonAktif = false;
@@ -38,7 +38,6 @@ class _CreateSalesOrderScreenState extends State<CreateSalesOrderScreen> {
   final _programCtrl = TextEditingController();
   final _rewardCtrl = TextEditingController();
   final _poinprogramCtrl = TextEditingController();
-  
 
   // Data Customers
   List<OptionItem> _customers = [];
@@ -52,30 +51,31 @@ class _CreateSalesOrderScreenState extends State<CreateSalesOrderScreen> {
 
   bool _submitting = false;
 
-  // ================== 🔥 Helper Filtering ==================
+  // ================== Filtering helpers ==================
 
+  // kategori diambil dari customers terfilter Dept+Emp (client-side)
   Future<List<OptionItem>> _getFilteredCategories() async {
-    final cats = await ApiService.fetchCustomerCategories();
-    final allCustomers = await ApiService.fetchCustomersDropdown();
+    if (_deptId == null || _empId == null) return [];
 
-    if (_empId == null) return cats;
+    // customers hasil filter Dept + Karyawan
+    final custs = await ApiService.fetchCustomersByDeptEmp(
+      departmentId: _deptId!,
+      employeeId: _empId!,
+    );
 
-    final kategoriIds = allCustomers
-        .where((c) => c.employeeId == _empId) // employee cocok
-        .map((c) => c.categoryId)
-        .whereType<int>()
-        .toSet();
+    // semua kategori lalu sisakan yang dipakai oleh customers di atas
+    final catsAll = await ApiService.fetchCustomerCategoriesAll();
+    final usedCatIds = custs.map((c) => c.categoryId).whereType<int>().toSet();
 
-    return cats.where((cat) => kategoriIds.contains(cat.id)).toList();
+    return catsAll.where((cat) => usedCatIds.contains(cat.id)).toList();
   }
 
   Future<List<OptionItem>> _getFilteredPrograms() async {
-  return ApiService.fetchCustomerPrograms(
-    employeeId: _empId,
-    categoryId: _categoryId,
-  );
-}
-
+    return ApiService.fetchCustomerPrograms(
+      employeeId: _empId,
+      categoryId: _categoryId,
+    );
+  }
 
   Future<void> _loadCustomers() async {
     final allCustomers = await ApiService.fetchCustomersDropdown();
@@ -89,7 +89,6 @@ class _CreateSalesOrderScreenState extends State<CreateSalesOrderScreen> {
 
     setState(() => _customers = filtered);
   }
-
 
   @override
   void dispose() {
@@ -135,11 +134,10 @@ class _CreateSalesOrderScreenState extends State<CreateSalesOrderScreen> {
   }
 
   @override
-void initState() {
-  super.initState();
-  _loadCustomers(); // 🔥 isi data awal
-}
-
+  void initState() {
+    super.initState();
+    _loadCustomers();
+  }
 
   String _formatRp(int n) {
     final s = n.toString();
@@ -198,6 +196,12 @@ void initState() {
                               setState(() {
                                 _deptId = v;
                                 _empId = null;
+                                _categoryId = null;
+                                _customerId = null;
+                                _phoneCtrl.clear();
+                                _addressCtrl.clear();
+                                _programCtrl.clear();
+                                _programId = null;
                               });
                               _loadCustomers();
                             },
@@ -214,15 +218,20 @@ void initState() {
                                 _empId = v;
                                 _categoryId = null;
                                 _customerId = null;
+                                _phoneCtrl.clear();
+                                _addressCtrl.clear();
+                                _programCtrl.clear();
+                                _programId = null;
                               });
+                              _loadCustomers();
                             },
                           ),
 
-
+                          // pakai _getFilteredCategories() (client-side)
                           _dropdownFuture(
                             label: 'Kategori Customer *',
-                            future: _empId != null
-                                ? ApiService.fetchCustomerCategories(employeeId: _empId!)
+                            future: (_deptId != null && _empId != null)
+                                ? _getFilteredCategories()
                                 : Future.value([]),
                             value: _categoryId,
                             width: fieldWidth,
@@ -230,7 +239,12 @@ void initState() {
                               setState(() {
                                 _categoryId = v;
                                 _customerId = null;
+                                _phoneCtrl.clear();
+                                _addressCtrl.clear();
+                                _programCtrl.clear();
+                                _programId = null;
                               });
+                              _loadCustomers();
                             },
                           ),
 
@@ -245,25 +259,30 @@ void initState() {
                                 : Future.value([]),
                             value: _customerId,
                             width: fieldWidth,
-                           onChanged: (v) async {
+                            onChanged: (v) async {
                               setState(() => _customerId = v);
                               if (v != null) {
                                 try {
                                   final cust = await ApiService.fetchCustomerDetail(v);
                                   setState(() {
                                     _phoneCtrl.text   = cust.phone ?? '';
-                                  _addressCtrl.text = cust.alamatDisplay;
+                                    _addressCtrl.text = cust.alamatDisplay;
                                     _programCtrl.text = cust.programName ?? '-';
                                     _programId        = cust.programId;
                                   });
                                 } catch (e) {
                                   _notify("Gagal ambil detail customer", color: Colors.red);
                                 }
+                              } else {
+                                setState(() {
+                                  _phoneCtrl.clear();
+                                  _addressCtrl.clear();
+                                  _programCtrl.clear();
+                                  _programId = null;
+                                });
                               }
                             },
                           ),
-
-                         
 
                           _darkTextField(
                             label: 'Phone *',
@@ -277,22 +296,20 @@ void initState() {
                             maxLines: 2,
                           ),
 
-                          
-                         _darkTextField(
+                          _darkTextField(
                             label: 'Poin Reward',
                             width: fieldWidth,
                             controller: _rewardCtrl,
                             hint: '0',
                             enabled: _rewardAktif,
                           ),
-                          // Reward & Program toggles
                           _switchTile(
                             width: fieldWidth,
                             title: 'Reward',
                             value: _rewardAktif,
                             onChanged: (v) => setState(() => _rewardAktif = v),
                           ),
-                           _darkTextField(
+                          _darkTextField(
                             label: 'Poin Program',
                             width: fieldWidth,
                             controller: _poinprogramCtrl,
@@ -309,8 +326,8 @@ void initState() {
                           _darkTextField(
                             label: 'Program Customer',
                             width: fieldWidth,
-                            controller: _programCtrl, 
-                            enabled: false,          
+                            controller: _programCtrl,
+                            enabled: false,
                           ),
 
                           // Diskon
@@ -323,7 +340,7 @@ void initState() {
                               _recomputeTotals();
                             },
                           ),
-                          
+
                           _darkTextField(
                             label: 'Diskon 1 (%)',
                             width: fieldWidth,
@@ -495,40 +512,39 @@ void initState() {
                       onChanged: (v) => setState(() => it.brandId = v),
                     ),
                     _dropdownFuture(
-                        label: 'Kategori *',
-                        future: it.brandId != null 
-                            ? ApiService.fetchCategoriesByBrand(it.brandId!)
-                            : Future.value([]),
-                        value: it.kategoriId,
-                        width: itemWidth,
-                        onChanged: (v) => setState(() {
-                          it.kategoriId = v;
-                          it.produkId = null;
+                      label: 'Kategori *',
+                      future: it.brandId != null
+                          ? ApiService.fetchCategoriesByBrand(it.brandId!)
+                          : Future.value([]),
+                      value: it.kategoriId,
+                      width: itemWidth,
+                      onChanged: (v) => setState(() {
+                        it.kategoriId = v;
+                        it.produkId = null;
+                        it.warnaId = null;
+                      }),
+                    ),
+
+                    _dropdownFuture(
+                      label: 'Produk *',
+                      future: (it.brandId != null && it.kategoriId != null)
+                          ? ApiService.fetchProductsByBrandCategory(it.brandId!, it.kategoriId!)
+                          : Future.value([]),
+                      value: it.produkId,
+                      width: itemWidth,
+                      onChanged: (v) async {
+                        setState(() {
+                          it.produkId = v;
                           it.warnaId = null;
-                        }),
-                      ),
-
-                      _dropdownFuture(
-                        label: 'Produk *',
-                        future: (it.brandId != null && it.kategoriId != null)
-                            ? ApiService.fetchProductsByBrandCategory(it.brandId!, it.kategoriId!)
-                            : Future.value([]),
-                        value: it.produkId,
-                        width: itemWidth,
-                        onChanged: (v) async {
-                          setState(() {
-                            it.produkId = v;
-                            it.warnaId = null;
-                            it.availableColors = [];
-                          });
-                          if (v != null) {
-                            it.availableColors = await ApiService.fetchColorsByProductFiltered(v);
-                            it.hargaPerProduk  = await ApiService.fetchProductPrice(v);
-                            _recomputeTotals();
-                          }
-                        },
-                      ),
-
+                          it.availableColors = [];
+                        });
+                        if (v != null) {
+                          it.availableColors = await ApiService.fetchColorsByProductFiltered(v);
+                          it.hargaPerProduk  = await ApiService.fetchProductPrice(v);
+                          _recomputeTotals();
+                        }
+                      },
+                    ),
 
                     // Warna
                     SizedBox(
@@ -569,11 +585,11 @@ void initState() {
                       ),
                     ),
 
-                    // Qty
+                    // Qty (badge "Qty" seperti gambar)
                     SizedBox(
                       width: itemWidth,
                       child: _qtyField(
-                        label: 'Jumlah',
+                        label: 'Jumlah *',
                         value: it.qty?.toString(),
                         onChanged: (txt) {
                           setState(() => it.qty = int.tryParse(txt) ?? 0);
@@ -646,69 +662,67 @@ void initState() {
   }
 
   Widget _dropdownFuture({
-  required String label,
-  required Future<List<OptionItem>> future,
-  required int? value,
-  required double width,
-  required ValueChanged<int?> onChanged,
-  bool enabled = true,
-}) {
-  return SizedBox(
-    width: width,
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: const TextStyle(color: Colors.white)),
-        const SizedBox(height: 6),
-        FutureBuilder<List<OptionItem>>(
-          future: future,
-          builder: (context, snapshot) {
-            if (!snapshot.hasData) {
-              return const SizedBox(
-                height: 48,
-                child: Center(child: CircularProgressIndicator()),
+    required String label,
+    required Future<List<OptionItem>> future,
+    required int? value,
+    required double width,
+    required ValueChanged<int?> onChanged,
+    bool enabled = true,
+  }) {
+    return SizedBox(
+      width: width,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(color: Colors.white)),
+          const SizedBox(height: 6),
+          FutureBuilder<List<OptionItem>>(
+            future: future,
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) {
+                return const SizedBox(
+                  height: 48,
+                  child: Center(child: CircularProgressIndicator()),
+                );
+              }
+              final items = snapshot.data!;
+
+              final safeValue = (value != null && items.any((e) => e.id == value))
+                  ? value
+                  : null;
+
+              return DropdownButtonFormField<int>(
+                isExpanded: true,
+                value: safeValue,
+                items: items
+                    .map((opt) => DropdownMenuItem(
+                          value: opt.id,
+                          child: Text(
+                            opt.name,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            softWrap: true,
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                        ))
+                    .toList(),
+                onChanged: enabled ? onChanged : null,
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: const Color(0xFF22344C),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+                dropdownColor: Colors.grey[900],
+                iconEnabledColor: Colors.white,
+                style: const TextStyle(color: Colors.white),
               );
-            }
-            final items = snapshot.data!;
-
-           
-            final safeValue = (value != null && items.any((e) => e.id == value))
-                ? value
-                : null;
-
-            return DropdownButtonFormField<int>(
-              isExpanded: true,
-              value: safeValue,
-              items: items
-                  .map((opt) => DropdownMenuItem(
-                        value: opt.id,
-                        child: Text(
-                          opt.name,
-                          maxLines: 2, // boleh 2 baris
-                          overflow: TextOverflow.ellipsis,
-                          softWrap: true,
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                      ))
-                  .toList(),
-              onChanged: enabled ? onChanged : null,
-              decoration: InputDecoration(
-                filled: true,
-                fillColor: const Color(0xFF22344C),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-              ),
-              dropdownColor: Colors.grey[900],
-              iconEnabledColor: Colors.white,
-              style: const TextStyle(color: Colors.white),
-            );
-          },
-        ),
-      ],
-    ),
-  );
-}
-
+            },
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _darkTextField({
     required String label,
@@ -779,6 +793,7 @@ void initState() {
     );
   }
 
+  /// Qty dengan badge "Qty" di kiri (sesuai desain gambar)
   Widget _qtyField({
     required String label,
     String? value,
@@ -789,17 +804,33 @@ void initState() {
       children: [
         Text(label, style: const TextStyle(color: Colors.white)),
         const SizedBox(height: 6),
-        TextFormField(
-          initialValue: value,
-          keyboardType: TextInputType.number,
-          onChanged: onChanged,
-          style: const TextStyle(color: Colors.white),
-          decoration: InputDecoration(
-            filled: true,
-            fillColor: const Color(0xFF22344C),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-          ),
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF22344C),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.white24),
+              ),
+              child: const Text('Qty', style: TextStyle(color: Colors.white70)),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextFormField(
+                initialValue: value,
+                keyboardType: TextInputType.number,
+                onChanged: onChanged,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: const Color(0xFF22344C),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+              ),
+            ),
+          ],
         ),
       ],
     );
@@ -854,7 +885,6 @@ void initState() {
     try {
       final d1 = double.tryParse(_diskon1Ctrl.text.replaceAll(',', '.')) ?? 0.0;
       final d2 = double.tryParse(_diskon2Ctrl.text.replaceAll(',', '.')) ?? 0.0;
-  
 
       final ok = await ApiService.createOrder(
         companyId: 1, // sesuaikan

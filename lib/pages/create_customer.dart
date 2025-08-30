@@ -1,10 +1,9 @@
 // lib/pages/create_customer.dart
 import 'dart:io';
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
-import 'dart:typed_data';
-
 
 import '../services/api_service.dart'; // ApiService, OptionItem, AddressInput
 
@@ -111,7 +110,7 @@ class _CreateCustomerScreenState extends State<CreateCustomerScreen> {
     setState(() => _loadingOptions = true);
     try {
       final depts = await ApiService.fetchDepartments();
-      final cats  = await ApiService.fetchCustomerCategories();
+      final cats  = await ApiService.fetchCustomerCategoriesAll();
 
       if (!mounted) return;
       setState(() {

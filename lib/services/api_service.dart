@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/customer.dart';
+import '../models/employee_profile.dart';
 import '../models/garansi_row.dart';
 import '../models/order_row.dart';
 import '../models/return_row.dart';
@@ -312,6 +313,44 @@ class ApiService {
   }
 
   // ---------- AUTH ----------
+  /// Simpan info user dari payload login (jika ada)
+  static Future<void> _saveUserFromLoginPayload(dynamic body) async {
+    try {
+      if (body is! Map) return;
+      final map = Map<String, dynamic>.from(body);
+      final u = (map['user'] is Map)
+          ? Map<String, dynamic>.from(map['user'])
+          : (map['data'] is Map)
+              ? Map<String, dynamic>.from(map['data'])
+              : null;
+      if (u == null) return;
+      final prefs = await SharedPreferences.getInstance();
+      if (u['email'] != null) {
+        await prefs.setString('user_email', u['email'].toString());
+      }
+      if (u['name'] != null) {
+        await prefs.setString('user_name', u['name'].toString());
+      }
+    } catch (_) {}
+  }
+
+  /// Decode JWT utk ambil email jika memungkinkan
+  static Map<String, dynamic>? _decodeJwt(String token) {
+    try {
+      final parts = token.split('.');
+      if (parts.length != 3) return null;
+      String normalized = parts[1];
+      // base64url padding
+      while (normalized.length % 4 != 0) {
+        normalized += '=';
+      }
+      final payload = utf8.decode(base64Url.decode(normalized));
+      final map = jsonDecode(payload);
+      if (map is Map<String, dynamic>) return map;
+    } catch (_) {}
+    return null;
+  }
+
   static Future<bool> login(String email, String password) async {
     try {
       final url = _buildUri('auth/login');
@@ -326,6 +365,14 @@ class ApiService {
           body['token'] != null) {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('token', body['token']);
+        // simpan email dari payload user jika ada
+        await _saveUserFromLoginPayload(body);
+        // simpan email dari JWT jika tersedia
+        final jwt = _decodeJwt(body['token'].toString());
+        final jwtEmail = jwt?['email'] ?? jwt?['sub'];
+        if (jwtEmail is String && jwtEmail.isNotEmpty) {
+          await prefs.setString('user_email', jwtEmail);
+        }
         return true;
       }
       return false;
@@ -337,6 +384,140 @@ class ApiService {
   static Future<void> logout() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('token');
+    await prefs.remove('user_email');
+    await prefs.remove('user_name');
+  }
+
+  /// Ambil informasi user login:
+  /// 1) prefs (user_email) kalau ada
+  /// 2) coba beberapa endpoint
+  /// 3) decode JWT
+  static Future<Map<String, dynamic>?> fetchAuthMe() async {
+    // 1) dari prefs
+    final prefs = await SharedPreferences.getInstance();
+    final cachedEmail = prefs.getString('user_email');
+    final cachedName = prefs.getString('user_name');
+    if (cachedEmail != null && cachedEmail.isNotEmpty) {
+      return {'email': cachedEmail, if (cachedName != null) 'name': cachedName};
+    }
+
+    // 2) endpoint yang umum
+    final headers = await _authorizedHeaders();
+    for (final path in [
+      'auth/me',
+      'me',
+      'user',
+      'auth/user',
+      'users/me',
+      'profile',
+    ]) {
+      try {
+        final uri = _buildUri(path);
+        final res = await http.get(uri, headers: headers);
+        if (res.statusCode != 200) continue;
+        final decoded = _safeDecode(res.body);
+        final data = (decoded is Map && decoded['data'] is Map)
+            ? Map<String, dynamic>.from(decoded['data'])
+            : (decoded is Map ? Map<String, dynamic>.from(decoded) : null);
+        if (data != null && (data['email'] ?? data['user']?['email']) != null) {
+          // cache supaya panggilan berikutnya cepat
+          final email = (data['email'] ?? data['user']?['email']).toString();
+          await prefs.setString('user_email', email);
+          if (data['name'] != null) {
+            await prefs.setString('user_name', data['name'].toString());
+          }
+          return data;
+        }
+      } catch (_) {}
+    }
+
+    // 3) decode JWT
+    final token = prefs.getString('token');
+    if (token != null && token.isNotEmpty) {
+      final jwt = _decodeJwt(token);
+      final email = jwt?['email'] ?? jwt?['sub'];
+      if (email is String && email.isNotEmpty) {
+        await prefs.setString('user_email', email);
+        return {'email': email};
+      }
+    }
+
+    return null;
+  }
+
+  /// Ambil profil employee untuk user yang login (dengan filter email).
+  /// Jika email tidak tersedia, fallback: ambil 1 employee aktif supaya UI tidak kosong.
+  static Future<EmployeeProfile?> fetchMyEmployeeProfile() async {
+    String? email;
+    final me = await fetchAuthMe();
+    email = (me?['email'] ?? me?['user']?['email'] ?? me?['data']?['email'])
+        ?.toString();
+
+    final headers = await _authorizedHeaders();
+
+    // Jika punya email -> filter by email
+    if (email != null && email.isNotEmpty) {
+      final uri = _buildUri('employees', query: {
+        'per_page': '1',
+        'filter[email]': email,
+      });
+      final res = await http.get(uri, headers: headers);
+      if (res.statusCode == 200) {
+        final decoded = _safeDecode(res.body);
+        final list = _extractList(decoded);
+        if (list.isNotEmpty) {
+          final map = Map<String, dynamic>.from(list.first);
+          map['photo'] = _absoluteUrl(map['photo']?.toString());
+          return EmployeeProfile.fromJson(map);
+        }
+      }
+      // kalau gagal, lanjut fallback ke bawah
+    }
+
+    // Fallback terakhir: ambil 1 employee aktif/random
+    try {
+      final uri = _buildUri('employees', query: {'per_page': '1'});
+      final res = await http.get(uri, headers: headers);
+      if (res.statusCode == 200) {
+        final decoded = _safeDecode(res.body);
+        final list = _extractList(decoded);
+        if (list.isNotEmpty) {
+          final map = Map<String, dynamic>.from(list.first);
+          map['photo'] = _absoluteUrl(map['photo']?.toString());
+          return EmployeeProfile.fromJson(map);
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Ambil URL gambar banner dari backend (maks 4)
+  static Future<List<String>> fetchBannerImages() async {
+    final headers = await _authorizedHeaders();
+    for (final path in ['banners', 'banner']) {
+      try {
+        final uri = _buildUri(path, query: {'per_page': '50'});
+        final res = await http.get(uri, headers: headers);
+        if (res.statusCode != 200) continue;
+
+        final decoded = _safeDecode(res.body);
+        final list = _extractList(decoded);
+
+        final urls = <String>[];
+        for (final raw in list) {
+          if (raw is Map) {
+            for (final key in ['image_1', 'image_2', 'image_3', 'image_4']) {
+              final v = (raw[key] ?? '').toString().trim();
+              if (v.isEmpty || v.toLowerCase() == 'null') continue;
+              urls.add(_absoluteUrl(v));
+            }
+          }
+        }
+        final uniq = urls.where((e) => e.isNotEmpty).toSet().toList();
+        if (uniq.isNotEmpty) return uniq.take(4).toList();
+      } catch (_) {}
+    }
+    return <String>[];
   }
 
   // ---------- DROPDOWN ----------
@@ -391,38 +572,70 @@ class ApiService {
   static Future<List<OptionItem>> fetchDepartments() =>
       ApiService()._fetchOptionsTryPaths(['departments']);
 
-  static Future<List<OptionItem>> fetchEmployees(
-      {required int departmentId}) async {
-    return ApiService()._fetchOptionsTryPaths(
-      ['customers'],
-      query: {
-        'type': 'employees',
-        'department_id': '$departmentId',
-      },
-      filterActive: false,
-    );
-  }
+  // ======================= DROPDOWN =======================
 
-  /// Customer Categories (bisa difilter employee)
-  static Future<List<OptionItem>> fetchCustomerCategories({int? employeeId}) {
-    return ApiService()._fetchOptionsTryPaths(
-      ['customer-categories'],
-      query: employeeId != null ? {'employee_id': '$employeeId'} : null,
-      filterActive: true,
-    );
-  }
+// === CHANGED: sekarang pakai /orders?type=employees, bukan /customers ===
+static Future<List<OptionItem>> fetchEmployees({required int departmentId}) async {
+  return ApiService()._fetchOptionsTryPaths(
+    ['orders'], // << CHANGED
+    query: {
+      'type': 'employees',          // << CHANGED
+      'department_id': '$departmentId',
+    },
+    filterActive: false,
+  );
+}
 
-  static Future<List<OptionItem>> fetchCustomerPrograms(
-      {int? employeeId, int? categoryId}) {
-    final query = <String, String>{};
-    if (employeeId != null) query['employee_id'] = '$employeeId';
-    if (categoryId != null) query['customer_category_id'] = '$categoryId';
-    return ApiService()._fetchOptionsTryPaths(
-      ['customer-programs'],
-      query: query.isEmpty ? null : query,
-      filterActive: true,
-    );
-  }
+// === CHANGED: sekarang pakai /orders?type=customer-categories & bawa employee_id ===
+static Future<List<OptionItem>> fetchCustomerCategories({int? employeeId}) {
+  final q = <String, String>{'type': 'customer-categories'}; // << CHANGED
+  if (employeeId != null) q['employee_id'] = '$employeeId';  // << CHANGED
+  return ApiService()._fetchOptionsTryPaths(
+    ['orders'],                 // << CHANGED
+    query: q,                   // << CHANGED
+    filterActive: true,
+  );
+}
+
+// === CHANGED (opsional utk konsisten): pakai /orders?type=customer-programs ===
+static Future<List<OptionItem>> fetchCustomerPrograms({int? employeeId, int? categoryId}) {
+  // Handler backend-mu untuk 'customer-programs' hanya mendukung customer_id.
+  // Jadi di sini kita tetap load semua program (tanpa filter), biar kompatibel.
+  return ApiService()._fetchOptionsTryPaths(
+    ['orders'],                       // << CHANGED
+    query: {'type': 'customer-programs'}, // << CHANGED
+    filterActive: true,
+  );
+}
+// === ADDED: ambil SEMUA kategori customer (tanpa filter employee)
+static Future<List<OptionItem>> fetchCustomerCategoriesAll() {
+  return ApiService()._fetchOptionsTryPaths(
+    ['customer-categories'],
+    filterActive: true,
+  );
+}
+
+// === ADDED: ambil customers yang sudah terfilter Dept + Employee
+static Future<List<OptionItem>> fetchCustomersByDeptEmp({
+  required int departmentId,
+  required int employeeId,
+}) async {
+  final headers = await _authorizedHeaders();
+  final uri = _buildUri('orders', query: {
+    'type': 'customers',
+    'department_id': '$departmentId',
+    'employee_id': '$employeeId',
+    'per_page': '1000',
+  });
+
+  final res = await http.get(uri, headers: headers);
+  if (res.statusCode != 200) return [];
+
+  final decoded = _safeDecode(res.body);
+  final list = _extractList(decoded);
+  return list.map<OptionItem>((m) => _parseCustomer(m)).toList();
+}
+
 
   static Future<List<OptionItem>> fetchCustomerProgramsByCategory(
       int categoryId) async {
@@ -946,12 +1159,18 @@ class ApiService {
 
     for (int i = 0; i < products.length; i++) {
       final p = products[i];
-      request.fields['products[$i][produk_id]'] = '${p['produk_id'] ?? ''}';
-      if (p['warna_id'] != null) {
-        request.fields['products[$i][warna_id]'] = '${p['warna_id']}';
+
+      final produkId = (p['produk_id'] ?? '').toString();
+      final warnaId  = (p['warna_id'] ?? '').toString();
+      final qty      = (p['quantity'] ?? 0).toString();
+      final price    = (p['price'] ?? 0).toString();
+
+      request.fields['products[$i][produk_id]'] = produkId;
+      if (warnaId.isNotEmpty) {
+        request.fields['products[$i][warna_id]'] = warnaId;
       }
-      request.fields['products[$i][quantity]'] = '${p['quantity'] ?? 0}';
-      request.fields['products[$i][price]'] = '${p['price'] ?? 0}';
+      request.fields['products[$i][quantity]'] = qty;
+      request.fields['products[$i][price]']    = price;
     }
 
     if (files != null && files.isNotEmpty) {

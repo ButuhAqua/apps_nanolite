@@ -1,5 +1,5 @@
 // lib/pages/create_garansi.dart
-import 'dart:convert'; // <-- tambahkan
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -25,16 +25,22 @@ class _CreateGaransiScreenState extends State<CreateGaransiScreen> {
   final _alasanCtrl = TextEditingController();
   final _noteCtrl = TextEditingController();
 
-  // ===== Dropdown atas =====
-  OptionItem? _selectedDept;
-  OptionItem? _selectedEmp;
-  OptionItem? _selectedCustCat;
-  OptionItem? _selectedCustomer;
+  // ===== Dropdown atas (pakai ID agar aman) =====
+  int? _deptId;
+  int? _empId;
+  int? _catId;
+  int? _custId;
 
   List<OptionItem> _departments = [];
   List<OptionItem> _employees = [];
-  List<OptionItem> _custCats = [];
-  List<OptionItem> _customers = [];
+  List<OptionItem> _custCats = [];   // hasil filter Dept + Emp (+ intersect used)
+  List<OptionItem> _customers = [];  // hasil filter Dept + Emp + Cat
+
+  bool _loadingInit = false;
+  bool _loadingEmployees = false;
+  bool _loadingCategories = false;
+  bool _loadingCustomers = false;
+  bool _submitting = false;
 
   // ===== Produk list =====
   final List<_ProductRow> _rows = [ _ProductRow() ];
@@ -43,8 +49,6 @@ class _CreateGaransiScreenState extends State<CreateGaransiScreen> {
   final ImagePicker _picker = ImagePicker();
   final List<XFile> _photos = [];
 
-  bool _submitting = false;
-
   @override
   void initState() {
     super.initState();
@@ -52,72 +56,157 @@ class _CreateGaransiScreenState extends State<CreateGaransiScreen> {
     _rows.first.loadBrands(setState);
   }
 
+  @override
+  void dispose() {
+    _phoneCtrl.dispose();
+    _addrCtrl.dispose();
+    _tglPembelian.dispose();
+    _tglKlaim.dispose();
+    _alasanCtrl.dispose();
+    _noteCtrl.dispose();
+    super.dispose();
+  }
+
+  // ---------------- Bootstrap ----------------
   Future<void> _bootstrap() async {
-    final depts = await ApiService.fetchDepartments();
-    setState(() => _departments = depts);
+    setState(() => _loadingInit = true);
+    try {
+      final depts = await ApiService.fetchDepartments();
+      if (!mounted) return;
+      setState(() => _departments = depts);
+    } finally {
+      if (mounted) setState(() => _loadingInit = false);
+    }
+  }
+
+  // ---------------- Filter kategori seperti SO (paling aman) ----------------
+  Future<void> _refreshFilteredCategories() async {
+    setState(() {
+      _loadingCategories = true;
+      _catId = null;
+      _custId = null;
+      _custCats = [];
+      _customers = [];
+      _phoneCtrl.clear();
+      _addrCtrl.clear();
+    });
+
+    // butuh dept + emp
+    if (_deptId == null || _empId == null) {
+      if (mounted) setState(() => _loadingCategories = false);
+      return;
+    }
+
+    try {
+      // Ambil kategori by employee (bila backend support)
+      final serverCats = await ApiService.fetchCustomerCategories(employeeId: _empId);
+
+      // Ambil customers by Dept+Emp
+      final custDeptEmp = await ApiService.fetchCustomersByDeptEmp(
+        departmentId: _deptId!,
+        employeeId: _empId!,
+      );
+
+      // Kategori yang benar-benar dipakai customer tsb
+      final usedCatIds = custDeptEmp.map((c) => c.categoryId).whereType<int>().toSet();
+
+      // Kalau server kasih kategori, ambil yang intersect used; kalau kosong, fallback ambil semua lalu intersect
+      List<OptionItem> baseCats = serverCats;
+      if (baseCats.isEmpty) {
+        baseCats = await ApiService.fetchCustomerCategoriesAll();
+      }
+      final filtered = baseCats.where((cat) => usedCatIds.contains(cat.id)).toList();
+
+      if (!mounted) return;
+      setState(() => _custCats = filtered);
+    } catch (_) {
+      if (mounted) setState(() => _custCats = <OptionItem>[]);
+    } finally {
+      if (mounted) setState(() => _loadingCategories = false);
+    }
   }
 
   // ---------------- Handlers dropdown atas ----------------
-  Future<void> _onDepartmentChanged(OptionItem? dept) async {
+  Future<void> _onSelectDepartment(int? id) async {
     setState(() {
-      _selectedDept = dept;
-      _selectedEmp = null;
-      _selectedCustCat = null;
-      _selectedCustomer = null;
+      _deptId = id;
+      _empId = null;
+      _catId = null;
+      _custId = null;
       _employees = [];
       _custCats = [];
       _customers = [];
       _phoneCtrl.clear();
       _addrCtrl.clear();
+      _loadingEmployees = true;
     });
-    if (dept != null) {
-      final emps = await ApiService.fetchEmployees(departmentId: dept.id);
-      setState(() => _employees = emps);
+
+    if (id == null) {
+      setState(() => _loadingEmployees = false);
+      return;
     }
+
+    try {
+      final emps = await ApiService.fetchEmployees(departmentId: id);
+      if (!mounted) return;
+      setState(() => _employees = emps);
+    } finally {
+      if (mounted) setState(() => _loadingEmployees = false);
+    }
+
+    await _refreshFilteredCategories();
   }
 
-  Future<void> _onEmployeeChanged(OptionItem? emp) async {
+  Future<void> _onSelectEmployee(int? id) async {
     setState(() {
-      _selectedEmp = emp;
-      _selectedCustCat = null;
-      _selectedCustomer = null;
+      _empId = id;
+      _catId = null;
+      _custId = null;
       _custCats = [];
       _customers = [];
       _phoneCtrl.clear();
       _addrCtrl.clear();
     });
-    if (emp != null) {
-      final cats = await ApiService.fetchCustomerCategories(employeeId: emp.id);
-      setState(() => _custCats = cats);
-    }
+    await _refreshFilteredCategories();
   }
 
-  Future<void> _onCustomerCategoryChanged(OptionItem? cat) async {
+  Future<void> _onSelectCustomerCategory(int? id) async {
     setState(() {
-      _selectedCustCat = cat;
-      _selectedCustomer = null;
+      _catId = id;
+      _custId = null;
       _customers = [];
       _phoneCtrl.clear();
       _addrCtrl.clear();
+      _loadingCustomers = true;
     });
-    if (cat != null && _selectedDept != null && _selectedEmp != null) {
+
+    if (_deptId == null || _empId == null || id == null) {
+      setState(() => _loadingCustomers = false);
+      return;
+    }
+
+    try {
       final custs = await ApiService.fetchCustomersFiltered(
-        departmentId: _selectedDept!.id,
-        employeeId: _selectedEmp!.id,
-        categoryId: cat.id,
+        departmentId: _deptId!,
+        employeeId: _empId!,
+        categoryId: id,
       );
+      if (!mounted) return;
       setState(() => _customers = custs);
+    } finally {
+      if (mounted) setState(() => _loadingCustomers = false);
     }
   }
 
-  Future<void> _onCustomerChanged(OptionItem? cust) async {
+  Future<void> _onSelectCustomer(int? id) async {
     setState(() {
-      _selectedCustomer = cust;
+      _custId = id;
       _phoneCtrl.clear();
       _addrCtrl.clear();
     });
-    if (cust == null) return;
+    if (id == null) return;
 
+    final cust = _customers.firstWhere((c) => c.id == id, orElse: () => OptionItem(id: id, name: '-'));
     if (cust.phone != null && cust.phone!.isNotEmpty) {
       _phoneCtrl.text = cust.phone!;
     }
@@ -130,7 +219,7 @@ class _CreateGaransiScreenState extends State<CreateGaransiScreen> {
     }
 
     try {
-      final raw = await ApiService.fetchCustomerDetailRaw(cust.id);
+      final raw = await ApiService.fetchCustomerDetailRaw(id);
       final formatted = ApiService.formatAddress(raw);
       if (formatted.isNotEmpty && formatted != '-') {
         _addrCtrl.text = formatted;
@@ -151,6 +240,7 @@ class _CreateGaransiScreenState extends State<CreateGaransiScreen> {
     });
     if (brand != null) {
       final cats = await ApiService.fetchCategoriesByBrand(brand.id);
+      if (!mounted) return;
       setState(() => _rows[row].categories = cats);
     }
   }
@@ -168,6 +258,7 @@ class _CreateGaransiScreenState extends State<CreateGaransiScreen> {
         _rows[row].brand!.id,
         cat.id,
       );
+      if (!mounted) return;
       setState(() => _rows[row].products = prods);
     }
   }
@@ -180,6 +271,7 @@ class _CreateGaransiScreenState extends State<CreateGaransiScreen> {
     });
     if (prod != null) {
       final cols = await ApiService.fetchColorsByProductFiltered(prod.id);
+      if (!mounted) return;
       setState(() => _rows[row].colors = cols);
     }
   }
@@ -218,10 +310,10 @@ class _CreateGaransiScreenState extends State<CreateGaransiScreen> {
 
   // ---------------- Submit ----------------
   Future<void> _submit() async {
-    if (_selectedDept == null ||
-        _selectedEmp == null ||
-        _selectedCustCat == null ||
-        _selectedCustomer == null ||
+    if (_deptId == null ||
+        _empId == null ||
+        _catId == null ||
+        _custId == null ||
         _tglPembelian.text.isEmpty ||
         _tglKlaim.text.isEmpty ||
         _rows.isEmpty) {
@@ -254,13 +346,12 @@ class _CreateGaransiScreenState extends State<CreateGaransiScreen> {
       return;
     }
 
-    // ---- siapkan image sebagai base64 string (opsional) ----
+    // image sebagai base64 string (opsional)
     String? imageStr;
     if (_photos.isNotEmpty) {
       try {
         final first = _photos.first;
         final bytes = await first.readAsBytes();
-        // deteksi mime sederhana dari nama file
         final n = (first.name.isNotEmpty ? first.name : first.path).toLowerCase();
         final mime = n.endsWith('.png')
             ? 'image/png'
@@ -274,10 +365,10 @@ class _CreateGaransiScreenState extends State<CreateGaransiScreen> {
     setState(() => _submitting = true);
     final ok = await ApiService.createWarranty(
       companyId: 1,
-      departmentId: _selectedDept!.id,
-      employeeId: _selectedEmp!.id,
-      customerId: _selectedCustomer!.id,
-      categoryId: _selectedCustCat!.id,
+      departmentId: _deptId!,
+      employeeId: _empId!,
+      customerId: _custId!,
+      categoryId: _catId!,
       phone: _phoneCtrl.text.trim(),
       address: address,
       products: products,
@@ -286,9 +377,9 @@ class _CreateGaransiScreenState extends State<CreateGaransiScreen> {
       reason: _alasanCtrl.text.trim().isEmpty ? null : _alasanCtrl.text.trim(),
       note: _noteCtrl.text.trim().isEmpty ? null : _noteCtrl.text.trim(),
       status: 'pending',
-      imagePath: imageStr, // <-- kirim string base64
+      imagePath: imageStr,
     );
-    setState(() => _submitting = false);
+    if (mounted) setState(() => _submitting = false);
 
     if (!mounted) return;
     if (ok) {
@@ -301,18 +392,8 @@ class _CreateGaransiScreenState extends State<CreateGaransiScreen> {
 
   // ---------------- UI ----------------
   @override
-  void dispose() {
-    _phoneCtrl.dispose();
-    _addrCtrl.dispose();
-    _tglPembelian.dispose();
-    _tglKlaim.dispose();
-    _alasanCtrl.dispose();
-    _noteCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
+    final disabledAll = _loadingInit || _submitting;
     return Scaffold(
       appBar: AppBar(
         title: const Text('nanopiko'),
@@ -321,99 +402,112 @@ class _CreateGaransiScreenState extends State<CreateGaransiScreen> {
         elevation: 1,
       ),
       backgroundColor: const Color(0xFF0A1B2D),
+      body: _loadingInit
+          ? const Center(child: CircularProgressIndicator())
+          : SafeArea(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final bool isTablet = constraints.maxWidth >= 600;
+                    final double fieldWidth =
+                        isTablet ? (constraints.maxWidth - 60) / 2 : (constraints.maxWidth - 20) / 2;
 
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final bool isTablet = constraints.maxWidth >= 600;
-              final double fieldWidth =
-                  isTablet ? (constraints.maxWidth - 60) / 2 : (constraints.maxWidth - 20) / 2;
+                    return AbsorbPointer(
+                      absorbing: disabledAll,
+                      child: Opacity(
+                        opacity: disabledAll ? 0.6 : 1,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Create Garansi',
+                              style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 20),
 
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Create Garansi',
-                    style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 20),
+                            Wrap(
+                              spacing: 20,
+                              runSpacing: 16,
+                              children: [
+                                _dropdownInt('Departemen *',
+                                  width: fieldWidth,
+                                  value: _deptId,
+                                  items: _departments,
+                                  onChanged: _onSelectDepartment,
+                                ),
 
-                  Wrap(
-                    spacing: 20,
-                    runSpacing: 16,
-                    children: [
-                      _dd<OptionItem>('Departemen *',
-                          value: _selectedDept,
-                          items: _departments,
-                          width: fieldWidth,
-                          onChanged: _onDepartmentChanged),
-                      _dd<OptionItem>('Karyawan *',
-                          value: _selectedEmp,
-                          items: _employees,
-                          width: fieldWidth,
-                          onChanged: _onEmployeeChanged),
-                      _dd<OptionItem>('Kategori Customer *',
-                          value: _selectedCustCat,
-                          items: _custCats,
-                          width: fieldWidth,
-                          onChanged: _onCustomerCategoryChanged),
-                      _dd<OptionItem>('Customer *',
-                          value: _selectedCustomer,
-                          items: _customers,
-                          width: fieldWidth,
-                          onChanged: _onCustomerChanged),
-                      _tf('Phone *', _phoneCtrl, width: fieldWidth),
-                      _tf('Address', _addrCtrl, width: fieldWidth, maxLines: 2),
-                      _dateField('Tanggal Pembelian *', _tglPembelian, fieldWidth),
-                      _dateField('Tanggal Klaim *', _tglKlaim, fieldWidth),
-                      _tf('Alasan Pengajuan *', _alasanCtrl, width: fieldWidth, maxLines: 2),
-                      _tf('Catatan Tambahan', _noteCtrl,
-                          width: fieldWidth, maxLines: 2, hint: 'Opsional'),
-                    ],
-                  ),
+                                _dropdownInt('Karyawan *',
+                                  width: fieldWidth,
+                                  value: _empId,
+                                  items: _employees,
+                                  onChanged: _onSelectEmployee,
+                                  loading: _loadingEmployees,
+                                ),
 
-                  const SizedBox(height: 20),
+                                _dropdownInt('Kategori Customer *',
+                                  width: fieldWidth,
+                                  value: _catId,
+                                  items: _custCats,
+                                  onChanged: _onSelectCustomerCategory,
+                                  loading: _loadingCategories,
+                                ),
 
-                  _imagePicker(),
+                                _dropdownCustomer('Customer *',
+                                  width: fieldWidth,
+                                  value: _custId,
+                                  items: _customers,
+                                  onChanged: (cust) => _onSelectCustomer(cust.id),
+                                  loading: _loadingCustomers,
+                                ),
 
-                  const SizedBox(height: 20),
+                                _tf('Phone *', _phoneCtrl, width: fieldWidth),
+                                _tf('Address', _addrCtrl, width: fieldWidth, maxLines: 2),
+                                _dateField('Tanggal Pembelian *', _tglPembelian, fieldWidth),
+                                _dateField('Tanggal Klaim *', _tglKlaim, fieldWidth),
+                                _tf('Alasan Pengajuan *', _alasanCtrl, width: fieldWidth, maxLines: 2),
+                                _tf('Catatan Tambahan', _noteCtrl, width: fieldWidth, maxLines: 2, hint: 'Opsional'),
+                              ],
+                            ),
 
-                  const Text('Detail Produk',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 10),
+                            const SizedBox(height: 20),
+                            _imagePicker(),
+                            const SizedBox(height: 20),
 
-                  Column(children: List.generate(_rows.length, (i) => _productCard(i))),
+                            const Text('Detail Produk',
+                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 10),
 
-                  const SizedBox(height: 12),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: ElevatedButton.icon(
-                      onPressed: _addRow,
-                      icon: const Icon(Icons.add),
-                      label: const Text('Tambah Produk'),
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
-                    ),
-                  ),
+                            Column(children: List.generate(_rows.length, (i) => _productCard(i))),
+                            const SizedBox(height: 12),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: ElevatedButton.icon(
+                                onPressed: _addRow,
+                                icon: const Icon(Icons.add),
+                                label: const Text('Tambah Produk'),
+                                style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+                              ),
+                            ),
 
-                  const SizedBox(height: 30),
-
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      _formButton('Cancel', Colors.grey, () => Navigator.pop(context, false)),
-                      const SizedBox(width: 12),
-                      _formButton('Create', Colors.blue, _submitting ? null : _submit,
-                          showSpinner: _submitting),
-                    ],
-                  ),
-                ],
-              );
-            },
-          ),
-        ),
-      ),
+                            const SizedBox(height: 30),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                _formButton('Cancel', Colors.grey, () => Navigator.pop(context, false)),
+                                const SizedBox(width: 12),
+                                _formButton('Create', Colors.blue, _submitting ? null : _submit,
+                                    showSpinner: _submitting),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
     );
   }
 
@@ -444,40 +538,81 @@ class _CreateGaransiScreenState extends State<CreateGaransiScreen> {
     return SizedBox(width: width, child: field);
   }
 
-  Widget _dd<T>(String label,
-      {required T? value,
-      required List<T> items,
-      required ValueChanged<T?> onChanged,
-      double? width}) {
-    final field = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: const TextStyle(color: Colors.white)),
-        const SizedBox(height: 6),
-        DropdownButtonFormField<T>(
-          value: value,
-          items: items
-              .map((e) => DropdownMenuItem<T>(
-                    value: e,
-                    child: Text((e is OptionItem) ? e.name : e.toString()),
-                  ))
-              .toList(),
-          onChanged: onChanged,
-          decoration: InputDecoration(
-            filled: true,
-            fillColor: const Color(0xFF22344C),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+  Widget _dropdownInt(String label,
+      {required double width,
+      required int? value,
+      required List<OptionItem> items,
+      required ValueChanged<int?> onChanged,
+      bool loading = false}) {
+    return SizedBox(
+      width: width,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(color: Colors.white)),
+          const SizedBox(height: 6),
+          DropdownButtonFormField<int>(
+            value: value,
+            items: items
+                .map((o) => DropdownMenuItem(value: o.id, child: Text(o.name)))
+                .toList(),
+            onChanged: loading ? null : onChanged,
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: const Color(0xFF22344C),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            ),
+            dropdownColor: Colors.grey[900],
+            iconEnabledColor: Colors.white,
+            style: const TextStyle(color: Colors.white),
           ),
-          dropdownColor: Colors.grey[900],
-          iconEnabledColor: Colors.white,
-          style: const TextStyle(color: Colors.white),
-        ),
-      ],
+        ],
+      ),
     );
+  }
 
-    if (width == null) return field;
-    return SizedBox(width: width, child: field);
+  Widget _dropdownCustomer(String label,
+      {required double width,
+      required int? value,
+      required List<OptionItem> items,
+      required ValueChanged<OptionItem> onChanged,
+      bool loading = false}) {
+    return SizedBox(
+      width: width,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(color: Colors.white)),
+          const SizedBox(height: 6),
+          DropdownButtonFormField<int>(
+            value: value,
+            items: items
+                .map((c) => DropdownMenuItem(value: c.id, child: Text(c.name)))
+                .toList(),
+            onChanged: loading
+                ? null
+                : (v) {
+                    if (v == null) {
+                      onChanged(OptionItem(id: 0, name: '-'));
+                      return;
+                      }
+                    final cust = items.firstWhere((c) => c.id == v);
+                    onChanged(cust);
+                  },
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: const Color(0xFF22344C),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            ),
+            dropdownColor: Colors.grey[900],
+            iconEnabledColor: Colors.white,
+            style: const TextStyle(color: Colors.white),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _dateField(String label, TextEditingController controller, double width) {

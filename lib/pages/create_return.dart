@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
-import '../models/customer.dart';
 import '../services/api_service.dart';
 
 class CreateReturnScreen extends StatefulWidget {
@@ -23,36 +22,26 @@ class _CreateReturnScreenState extends State<CreateReturnScreen> {
   final _reasonCtrl = TextEditingController();
   final _noteCtrl = TextEditingController();
 
-  // ====== State ======
+  // ====== Dropdown atas ======
   List<OptionItem> _departments = [];
   List<OptionItem> _employees = [];
   List<OptionItem> _categories = [];
-  List<Customer> _customers = [];
-  List<OptionItem> _products = [];
-  List<OptionItem> _brands = [];
-  List<OptionItem> _productCategories = [];
-
-  /// Warna per row + cache per productId
-  final Map<int, List<OptionItem>> _colorsByRow = {};              // key: index row
-  final Map<int, List<OptionItem>> _colorCacheByProductId = {};    // key: productId
-  final Set<int> _loadingColorRows = {};                           // row yang lagi loading
+  List<OptionItem> _customers = [];
 
   int? _deptId;
   int? _empId;
   int? _catId;
   int? _custId;
 
-  Customer? _selectedCustomer;
-
   bool _loadingOptions = false;
   bool _loadingEmployees = false;
   bool _loadingCustomers = false;
   bool _submitting = false;
 
-  // Produk list
-  final _items = <_ProductItem>[ _ProductItem() ];
+  // ====== Detail produk (mengikuti create_garansi) ======
+  final List<_ReturnRow> _rows = [ _ReturnRow() ];
 
-  // Foto
+  // ====== Foto ======
   final ImagePicker _picker = ImagePicker();
   final List<XFile> _photos = [];
 
@@ -60,6 +49,7 @@ class _CreateReturnScreenState extends State<CreateReturnScreen> {
   void initState() {
     super.initState();
     _loadOptions();
+    _rows.first.loadBrands(setState); // muat brand utk baris pertama
   }
 
   @override
@@ -72,38 +62,98 @@ class _CreateReturnScreenState extends State<CreateReturnScreen> {
     super.dispose();
   }
 
-  // ====== LOAD OPTIONS ======
+  // ====== LOAD OPTIONS (atas) ======
   Future<void> _loadOptions() async {
     setState(() => _loadingOptions = true);
     try {
       final depts = await ApiService.fetchDepartments();
-      final cats  = await ApiService.fetchCustomerCategories();
-      final prods = await ApiService.fetchProducts();
-      final brands = await ApiService.fetchBrands();
-      final categories = await ApiService.fetchProductCategories();
-
+      final cats  = await ApiService.fetchCustomerCategoriesAll();
       if (!mounted) return;
       setState(() {
         _departments = depts;
-        _categories  = cats;
-        _products    = prods;
-        _brands      = brands;
-        _productCategories = categories;
+        _categories  = cats; // akan difilter lagi via dept+emp
       });
     } finally {
       if (mounted) setState(() => _loadingOptions = false);
     }
   }
 
+  // Filter kategori berdasarkan Dept + Karyawan (seperti garansi)
+  Future<void> _refreshFilteredCategories() async {
+    if (_deptId == null || _empId == null) {
+      setState(() => _categories = []);
+      return;
+    }
+
+    final custs = await ApiService.fetchCustomersByDeptEmp(
+      departmentId: _deptId!,
+      employeeId: _empId!,
+    );
+
+    // coba ambil kategori by employee; fallback ke all
+    final baseServer = await ApiService.fetchCustomerCategories(employeeId: _empId);
+    var baseCats = baseServer.isEmpty
+        ? await ApiService.fetchCustomerCategoriesAll()
+        : baseServer;
+
+    final usedCatIds = custs.map((c) => c.categoryId).whereType<int>().toSet();
+    final filtered = baseCats.where((c) => usedCatIds.contains(c.id)).toList();
+
+    if (!mounted) return;
+    setState(() {
+      _categories = filtered;
+      if (_catId != null && !_categories.any((c) => c.id == _catId)) {
+        _catId = null;
+      }
+    });
+  }
+
+  // Load customers: Dept + Karyawan + Kategori
+  Future<void> _loadCustomersFiltered() async {
+    setState(() {
+      _loadingCustomers = true;
+      _customers = [];
+      _custId = null;
+      _phoneCtrl.clear();
+      _addrCtrl.clear();
+    });
+
+    if (_deptId == null || _empId == null || _catId == null) {
+      setState(() => _loadingCustomers = false);
+      return;
+    }
+
+    final list = await ApiService.fetchCustomersFiltered(
+      departmentId: _deptId!,
+      employeeId: _empId!,
+      categoryId: _catId!,
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _customers = list;
+      _loadingCustomers = false;
+    });
+  }
+
   Future<void> _onSelectDepartment(int? id) async {
     setState(() {
       _deptId = id;
       _empId = null;
+      _catId = null;
+      _custId = null;
       _employees = [];
+      _customers = [];
+      _phoneCtrl.clear();
+      _addrCtrl.clear();
       _loadingEmployees = true;
     });
 
-    if (id == null) return;
+    if (id == null) {
+      await _refreshFilteredCategories();
+      setState(() => _loadingEmployees = false);
+      return;
+    }
 
     final emps = await ApiService.fetchEmployees(departmentId: id);
     if (!mounted) return;
@@ -111,84 +161,126 @@ class _CreateReturnScreenState extends State<CreateReturnScreen> {
       _employees = emps;
       _loadingEmployees = false;
     });
+    await _refreshFilteredCategories();
   }
 
   Future<void> _onSelectEmployee(int? id) async {
     setState(() {
       _empId = id;
+      _catId = null;
       _custId = null;
       _customers = [];
-      _loadingCustomers = true;
+      _phoneCtrl.clear();
+      _addrCtrl.clear();
+      _loadingCustomers = false;
+    });
+    await _refreshFilteredCategories();
+  }
+
+  Future<void> _onSelectCategory(int? id) async {
+    setState(() {
+      _catId = id;
+      _custId = null;
+      _customers = [];
+      _phoneCtrl.clear();
+      _addrCtrl.clear();
+    });
+    await _loadCustomersFiltered();
+  }
+
+  Future<void> _onSelectCustomerId(int? id) async {
+    setState(() {
+      _custId = id;
+      _phoneCtrl.clear();
+      _addrCtrl.clear();
     });
 
-    if (id == null) {
-      setState(() => _loadingCustomers = false);
-      return;
-    }
+    if (id == null) return;
 
     try {
-      final all = await ApiService.fetchCustomers(perPage: 500);
+      final detail = await ApiService.fetchCustomerDetail(id);
       if (!mounted) return;
       setState(() {
-        _customers = all.where((c) => c.employeeId == id).toList();
-        _loadingCustomers = false;
+        _phoneCtrl.text = detail.phone ?? '';
+        _addrCtrl.text  = detail.alamatDisplay;
       });
     } catch (_) {
-      if (mounted) setState(() => _loadingCustomers = false);
-    }
-  }
-
-  void _onSelectCustomer(Customer cust) {
-    setState(() {
-      _custId = cust.id;
-      _selectedCustomer = cust;
-      _phoneCtrl.text = cust.phone ?? '';
-      _addrCtrl.text = cust.alamatDisplay;
-    });
-  }
-
-  // ====== Colors loader per-row ======
-  Future<void> _loadColorsForRow(int rowIndex, int productId) async {
-    // pakai cache jika tersedia
-    if (_colorCacheByProductId.containsKey(productId)) {
-      setState(() {
-        _colorsByRow[rowIndex] = _colorCacheByProductId[productId]!;
-      });
-      return;
-    }
-
-    setState(() => _loadingColorRows.add(rowIndex));
-    try {
-      final list = await ApiService.fetchColorsByProduct(productId);
-
       if (!mounted) return;
-
-      // simpan hasil (boleh kosong)
-      setState(() {
-        _colorsByRow[rowIndex] = list;
-        _colorCacheByProductId[productId] = list;
-      });
-
-      // beri info saat kosong agar tau dari backend tidak ada data
-      if (list.isEmpty && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Tidak ada warna untuk produk #$productId (cek API /products/$productId)'),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        // fallback: jangan biarkan loading nyangkut
-        _colorsByRow[rowIndex] = const <OptionItem>[];
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal memuat warna: $e')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _loadingColorRows.remove(rowIndex));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Gagal mengambil detail customer')),
+      );
     }
   }
+
+  // ====== Handlers detail produk (berantai, sama seperti garansi) ======
+  Future<void> _onBrandChanged(int row, OptionItem? brand) async {
+    setState(() {
+      _rows[row].brand = brand;
+      _rows[row].category = null;
+      _rows[row].product = null;
+      _rows[row].color = null;
+      _rows[row].categories = [];
+      _rows[row].products = [];
+      _rows[row].colors = [];
+    });
+    if (brand != null) {
+      final cats = await ApiService.fetchCategoriesByBrand(brand.id);
+      if (!mounted) return;
+      setState(() => _rows[row].categories = cats);
+    }
+  }
+
+  Future<void> _onRowCategoryChanged(int row, OptionItem? cat) async {
+    setState(() {
+      _rows[row].category = cat;
+      _rows[row].product = null;
+      _rows[row].color = null;
+      _rows[row].products = [];
+      _rows[row].colors = [];
+    });
+    if (cat != null && _rows[row].brand != null) {
+      final prods = await ApiService.fetchProductsByBrandCategory(
+        _rows[row].brand!.id,
+        cat.id,
+      );
+      if (!mounted) return;
+      setState(() => _rows[row].products = prods);
+    }
+  }
+
+  Future<void> _onProductChanged(int row, OptionItem? prod) async {
+    setState(() {
+      _rows[row].product = prod;
+      _rows[row].color = null;
+      _rows[row].colors = [];
+    });
+    if (prod != null) {
+      // utamakan endpoint filtered seperti di garansi; fallback ke yang umum
+      List<OptionItem> cols = [];
+      try {
+        cols = await ApiService.fetchColorsByProductFiltered(prod.id);
+      } catch (_) {
+        cols = await ApiService.fetchColorsByProduct(prod.id);
+      }
+      if (!mounted) return;
+      setState(() => _rows[row].colors = cols);
+    }
+  }
+
+  void _onColorChanged(int row, OptionItem? color) {
+    setState(() => _rows[row].color = color);
+  }
+
+  void _onQtyChanged(int row, String txt) {
+    setState(() => _rows[row].qty = int.tryParse(txt) ?? 0);
+  }
+
+  void _addProduk() {
+    setState(() => _rows.add(_ReturnRow()));
+    _rows.last.loadBrands(setState);
+  }
+
+  void _removeProduk(int i) => setState(() => _rows.removeAt(i));
 
   // ====== Foto ======
   Future<void> _pickFromGallery() async {
@@ -203,9 +295,6 @@ class _CreateReturnScreenState extends State<CreateReturnScreen> {
 
   void _removePhoto(int i) => setState(() => _photos.removeAt(i));
 
-  void _addProduk() => setState(() => _items.add(_ProductItem()));
-  void _removeProduk(int i) => setState(() => _items.removeAt(i));
-
   // ====== Submit ======
   Future<void> _submit() async {
     FocusScope.of(context).unfocus();
@@ -219,15 +308,24 @@ class _CreateReturnScreenState extends State<CreateReturnScreen> {
       return;
     }
 
-    // validasi minimal untuk baris produk
-    for (final it in _items) {
-      if (it.produkId == null || it.warnaId == null || (it.qty ?? 0) < 1) {
+    // Validasi baris produk (produk + warna wajib, qty >= 1)
+    for (final r in _rows) {
+      if (r.product == null || r.color == null || (r.qty ?? 0) < 1) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Pastikan setiap baris produk sudah memilih Produk, Warna, dan Jumlah >= 1')),
+          const SnackBar(content: Text('Pastikan setiap baris sudah pilih Produk, Warna, dan Jumlah ≥ 1')),
         );
         return;
       }
     }
+
+    final productsPayload = _rows.map((r) => {
+      'produk_id': r.product!.id,
+      // di create_garansi warna dikirim name; untuk Return umumnya pakai id — tetap kirim id.
+      'warna_id': r.color?.id,
+      'quantity': r.qty ?? 0,
+      'brand_id': r.brand?.id,
+      'kategori_id': r.category?.id,
+    }).toList();
 
     setState(() => _submitting = true);
 
@@ -250,7 +348,7 @@ class _CreateReturnScreenState extends State<CreateReturnScreen> {
         amount: int.tryParse(_amountCtrl.text.trim()) ?? 0,
         reason: _reasonCtrl.text.trim(),
         note: _noteCtrl.text.trim(),
-        products: _items.map((e) => e.toMap()).toList(),
+        products: productsPayload,
         photos: _photos,
       );
 
@@ -325,12 +423,12 @@ class _CreateReturnScreenState extends State<CreateReturnScreen> {
                                     width: fieldWidth,
                                     value: _catId,
                                     items: _categories,
-                                    onChanged: (v) => setState(() => _catId = v)),
-                                _dropdownCustomer('Customer *',
+                                    onChanged: (v) => _onSelectCategory(v)),
+                                _dropdownCustomerOption('Customer *',
                                     width: fieldWidth,
                                     value: _custId,
                                     items: _customers,
-                                    onChanged: (cust) => _onSelectCustomer(cust),
+                                    onChanged: (id) => _onSelectCustomerId(id),
                                     loading: _loadingCustomers),
                                 _textField('Phone *', _phoneCtrl, fieldWidth),
                                 _textField('Address', _addrCtrl, fieldWidth, maxLines: 2),
@@ -350,7 +448,7 @@ class _CreateReturnScreenState extends State<CreateReturnScreen> {
                             const Text('Detail Produk', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                             const SizedBox(height: 10),
 
-                            Column(children: List.generate(_items.length, (i) => _productCard(i))),
+                            Column(children: List.generate(_rows.length, (i) => _productCard(i))),
                             const SizedBox(height: 12),
                             Align(
                               alignment: Alignment.centerRight,
@@ -425,24 +523,17 @@ class _CreateReturnScreenState extends State<CreateReturnScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label,
-              style: const TextStyle(
-                  color: Colors.white, fontWeight: FontWeight.w500)),
+          Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500)),
           const SizedBox(height: 6),
           DropdownButtonFormField<int>(
             value: value,
-            items: items
-                .map((o) =>
-                    DropdownMenuItem(value: o.id, child: Text(o.name)))
-                .toList(),
+            items: items.map((o) => DropdownMenuItem(value: o.id, child: Text(o.name))).toList(),
             onChanged: loading ? null : onChanged,
             decoration: InputDecoration(
               filled: true,
               fillColor: const Color(0xFF22344C),
-              border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8)),
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             ),
             dropdownColor: Colors.grey[900],
             style: const TextStyle(color: Colors.white),
@@ -452,40 +543,29 @@ class _CreateReturnScreenState extends State<CreateReturnScreen> {
     );
   }
 
-  Widget _dropdownCustomer(String label,
+  // Dropdown Customer (OptionItem)
+  Widget _dropdownCustomerOption(String label,
       {required double width,
       required int? value,
-      required List<Customer> items,
-      required ValueChanged<Customer> onChanged,
+      required List<OptionItem> items,
+      required ValueChanged<int?> onChanged,
       bool loading = false}) {
     return SizedBox(
       width: width,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label,
-              style: const TextStyle(
-                  color: Colors.white, fontWeight: FontWeight.w500)),
+          Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500)),
           const SizedBox(height: 6),
           DropdownButtonFormField<int>(
             value: value,
-            items: items
-                .map((c) =>
-                    DropdownMenuItem(value: c.id, child: Text(c.name)))
-                .toList(),
-            onChanged: loading
-                ? null
-                : (v) {
-                    final cust = items.firstWhere((c) => c.id == v);
-                    onChanged(cust);
-                  },
+            items: items.map((c) => DropdownMenuItem(value: c.id, child: Text(c.name))).toList(),
+            onChanged: loading ? null : onChanged,
             decoration: InputDecoration(
               filled: true,
               fillColor: const Color(0xFF22344C),
-              border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8)),
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             ),
             dropdownColor: Colors.grey[900],
             style: const TextStyle(color: Colors.white),
@@ -516,15 +596,13 @@ class _CreateReturnScreenState extends State<CreateReturnScreen> {
                       onPressed: _pickFromGallery,
                       icon: const Icon(Icons.photo_library),
                       label: const Text('Pilih Foto'),
-                      style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.white),
+                      style: OutlinedButton.styleFrom(foregroundColor: Colors.white),
                     ),
                     OutlinedButton.icon(
                       onPressed: _pickFromCamera,
                       icon: const Icon(Icons.photo_camera),
                       label: const Text('Kamera'),
-                      style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.white),
+                      style: OutlinedButton.styleFrom(foregroundColor: Colors.white),
                     ),
                   ],
                 )
@@ -544,22 +622,12 @@ class _CreateReturnScreenState extends State<CreateReturnScreen> {
                           final bytes = await photo.readAsBytes();
                           return ClipRRect(
                             borderRadius: BorderRadius.circular(8),
-                            child: Image.memory(
-                              bytes,
-                              width: 90,
-                              height: 90,
-                              fit: BoxFit.cover,
-                            ),
+                            child: Image.memory(bytes, width: 90, height: 90, fit: BoxFit.cover),
                           );
                         } else {
                           return ClipRRect(
                             borderRadius: BorderRadius.circular(8),
-                            child: Image.file(
-                              File(photo.path),
-                              width: 90,
-                              height: 90,
-                              fit: BoxFit.cover,
-                            ),
+                            child: Image.file(File(photo.path), width: 90, height: 90, fit: BoxFit.cover),
                           );
                         }
                       }(),
@@ -568,8 +636,7 @@ class _CreateReturnScreenState extends State<CreateReturnScreen> {
                           return const SizedBox(
                             width: 90,
                             height: 90,
-                            child: Center(
-                                child: CircularProgressIndicator()),
+                            child: Center(child: CircularProgressIndicator()),
                           );
                         }
                         return Stack(
@@ -579,8 +646,7 @@ class _CreateReturnScreenState extends State<CreateReturnScreen> {
                               right: -6,
                               top: -6,
                               child: IconButton(
-                                icon: const Icon(Icons.cancel,
-                                    color: Colors.redAccent),
+                                icon: const Icon(Icons.cancel, color: Colors.redAccent),
                                 onPressed: () => _removePhoto(i),
                               ),
                             ),
@@ -597,16 +663,14 @@ class _CreateReturnScreenState extends State<CreateReturnScreen> {
                       onPressed: _pickFromGallery,
                       icon: const Icon(Icons.add_photo_alternate),
                       label: const Text('Tambah Foto'),
-                      style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.white),
+                      style: OutlinedButton.styleFrom(foregroundColor: Colors.white),
                     ),
                     const SizedBox(width: 10),
                     OutlinedButton.icon(
                       onPressed: _pickFromCamera,
                       icon: const Icon(Icons.photo_camera),
                       label: const Text('Kamera'),
-                      style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.white),
+                      style: OutlinedButton.styleFrom(foregroundColor: Colors.white),
                     ),
                   ],
                 )
@@ -615,9 +679,9 @@ class _CreateReturnScreenState extends State<CreateReturnScreen> {
     );
   }
 
+  // ---------- Kartu produk (desain + filtering seperti garansi) ----------
   Widget _productCard(int i) {
-    final isLoadingColor = _loadingColorRows.contains(i);
-    final colorsForRow = _colorsByRow[i] ?? const <OptionItem>[];
+    const gap = 16.0;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
@@ -629,6 +693,7 @@ class _CreateReturnScreenState extends State<CreateReturnScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Header bar
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: const BoxDecoration(
@@ -637,139 +702,170 @@ class _CreateReturnScreenState extends State<CreateReturnScreen> {
             ),
             child: Row(
               children: [
-                Text('Produk ${i+1}', style: const TextStyle(color: Colors.white70)),
+                const Icon(Icons.swap_vert, color: Colors.white54, size: 18),
+                const SizedBox(width: 8),
+                Text('Produk ${i + 1}', style: const TextStyle(color: Colors.white70)),
                 const Spacer(),
                 IconButton(
+                  tooltip: 'Hapus',
                   icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
                   onPressed: () => _removeProduk(i),
-                )
+                ),
               ],
             ),
           ),
+
+          // Body
           Padding(
-            padding: const EdgeInsets.all(12),
-            child: Wrap(
-              spacing: 16,
-              runSpacing: 16,
-              children: [
-                // Brand
-                SizedBox(
-                  width: 220,
-                  child: DropdownButtonFormField<int>(
-                    value: _items[i].brandId,
-                    items: _brands
-                        .map((b) => DropdownMenuItem<int>(value: b.id, child: Text(b.name)))
-                        .toList(),
-                    onChanged: (v) => setState(() => _items[i].brandId = v),
-                    decoration: InputDecoration(
-                      labelText: 'Brand *',
-                      filled: true,
-                      fillColor: const Color(0xFF22344C),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 14),
+            child: LayoutBuilder(
+              builder: (context, inner) {
+                final double itemWidth = (inner.maxWidth - gap) / 2;
+                return Wrap(
+                  spacing: gap,
+                  runSpacing: 16,
+                  children: [
+                    // Brand
+                    SizedBox(
+                      width: itemWidth,
+                      child: _pillDropdown<OptionItem>(
+                        label: 'Brand *',
+                        value: _rows[i].brand,
+                        items: _rows[i].brands,
+                        onChanged: (v) => _onBrandChanged(i, v),
+                      ),
                     ),
-                    dropdownColor: Colors.grey[900],
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                ),
-
-                // Kategori
-                SizedBox(
-                  width: 220,
-                  child: DropdownButtonFormField<int>(
-                    value: _items[i].kategoriId,
-                    items: _productCategories
-                        .map((c) => DropdownMenuItem<int>(value: c.id, child: Text(c.name)))
-                        .toList(),
-                    onChanged: (v) => setState(() => _items[i].kategoriId = v),
-                    decoration: InputDecoration(
-                      labelText: 'Kategori *',
-                      filled: true,
-                      fillColor: const Color(0xFF22344C),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    // Kategori by brand
+                    SizedBox(
+                      width: itemWidth,
+                      child: _pillDropdown<OptionItem>(
+                        label: 'Kategori *',
+                        value: _rows[i].category,
+                        items: _rows[i].categories,
+                        onChanged: (v) => _onRowCategoryChanged(i, v),
+                      ),
                     ),
-                    dropdownColor: Colors.grey[900],
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                ),
-
-                // Produk
-                SizedBox(
-                  width: 260,
-                  child: DropdownButtonFormField<int>(
-                    value: _items[i].produkId,
-                    items: _products
-                        .map((p) => DropdownMenuItem<int>(value: p.id, child: Text(p.name)))
-                        .toList(),
-                    onChanged: (v) async {
-                      setState(() {
-                        _items[i].produkId = v;
-                        _items[i].warnaId = null;  // reset warna
-                        _colorsByRow[i] = const []; // kosongkan dulu
-                      });
-                      if (v != null) {
-                        await _loadColorsForRow(i, v); // load warna by product
-                      }
-                    },
-                    decoration: InputDecoration(
-                      labelText: 'Produk *',
-                      filled: true,
-                      fillColor: const Color(0xFF22344C),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    // Produk by brand + kategori
+                    SizedBox(
+                      width: itemWidth,
+                      child: _pillDropdown<OptionItem>(
+                        label: 'Produk *',
+                        value: _rows[i].product,
+                        items: _rows[i].products,
+                        onChanged: (v) => _onProductChanged(i, v),
+                      ),
                     ),
-                    dropdownColor: Colors.grey[900],
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                ),
-
-                // Warna (dependent)
-                SizedBox(
-                  width: 220,
-                  child: DropdownButtonFormField<int>(
-                    value: _items[i].warnaId,
-                    items: colorsForRow
-                        .map((c) => DropdownMenuItem<int>(value: c.id, child: Text(c.name)))
-                        .toList(),
-                    onChanged: (_items[i].produkId == null || isLoadingColor)
-                        ? null
-                        : (v) => setState(() => _items[i].warnaId = v),
-                    decoration: InputDecoration(
-                      labelText: isLoadingColor
-                          ? 'Warna (loading...)'
-                          : (colorsForRow.isEmpty ? 'Warna (kosong)' : 'Warna *'),
-                      filled: true,
-                      fillColor: const Color(0xFF22344C),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    // Warna by produk
+                    SizedBox(
+                      width: itemWidth,
+                      child: _pillDropdown<OptionItem>(
+                        label: 'Warna *',
+                        value: _rows[i].color,
+                        items: _rows[i].colors,
+                        onChanged: (v) => _onColorChanged(i, v),
+                      ),
                     ),
-                    dropdownColor: Colors.grey[900],
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                ),
-
-                _qtyField('Jumlah *', _items[i].qty?.toString() ?? '',
-                    (txt) => setState(() => _items[i].qty = int.tryParse(txt))),
-              ],
+                    // Qty
+                    SizedBox(
+                      width: itemWidth,
+                      child: _qtyField(
+                        label: 'Jumlah *',
+                        value: _rows[i].qty?.toString(),
+                        onChanged: (txt) => _onQtyChanged(i, txt),
+                      ),
+                    ),
+                  ],
+                );
+              },
             ),
-          )
+          ),
         ],
       ),
     );
   }
 
-  Widget _qtyField(String label, String value, ValueChanged<String> onChanged) {
-    return SizedBox(
-      width: 160,
-      child: TextFormField(
-        initialValue: value,
-        keyboardType: TextInputType.number,
-        onChanged: onChanged,
-        style: const TextStyle(color: Colors.white),
-        decoration: InputDecoration(
-          labelText: label,
-          filled: true,
-          fillColor: const Color(0xFF22344C),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+  // Dropdown "pill" reuse
+  Widget _pillDropdown<T>({
+    required String label,
+    required T? value,
+    required List<T> items,
+    required ValueChanged<T?> onChanged,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(color: Colors.white)),
+        const SizedBox(height: 6),
+        DropdownButtonFormField<T>(
+          value: value,
+          items: items
+              .map((e) => DropdownMenuItem<T>(
+                    value: e,
+                    child: Text((e is OptionItem) ? e.name : e.toString()),
+                  ))
+              .toList(),
+          onChanged: onChanged,
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: const Color(0xFF22344C),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            suffixIcon: value == null
+                ? null
+                : IconButton(
+                    tooltip: 'Clear',
+                    icon: const Icon(Icons.close, size: 18, color: Colors.white70),
+                    onPressed: () => onChanged(null),
+                  ),
+          ),
+          dropdownColor: Colors.grey[900],
+          iconEnabledColor: Colors.white,
+          style: const TextStyle(color: Colors.white),
         ),
-      ),
+      ],
+    );
+  }
+
+  // Qty field dengan badge
+  Widget _qtyField({
+    required String label,
+    String? value,
+    required ValueChanged<String> onChanged,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(color: Colors.white)),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF22344C),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.white24),
+              ),
+              child: const Text('Qty', style: TextStyle(color: Colors.white70)),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextFormField(
+                initialValue: value,
+                keyboardType: TextInputType.number,
+                onChanged: onChanged,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: const Color(0xFF22344C),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 
@@ -786,20 +882,29 @@ class _CreateReturnScreenState extends State<CreateReturnScreen> {
   }
 }
 
-class _ProductItem {
-  int? produkId;
-  int? warnaId;
+// ===== Model baris untuk UI (mirip _ProductRow di create_garansi) =====
+class _ReturnRow {
+  OptionItem? brand;
+  OptionItem? category;
+  OptionItem? product;
+  OptionItem? color;
   int? qty;
-  int? brandId;
-  int? kategoriId;
 
-  _ProductItem({this.produkId, this.warnaId, this.qty, this.brandId, this.kategoriId});
+  List<OptionItem> brands = [];
+  List<OptionItem> categories = [];
+  List<OptionItem> products = [];
+  List<OptionItem> colors = [];
+
+  Future<void> loadBrands(void Function(VoidCallback fn) setState) async {
+    final b = await ApiService.fetchBrands();
+    setState(() => brands = b);
+  }
 
   Map<String, dynamic> toMap() => {
-        'produk_id': produkId,
-        'warna_id': warnaId,
+        'produk_id': product?.id,
+        'warna_id': color?.id,
         'quantity': qty ?? 0,
-        'brand_id': brandId,
-        'kategori_id': kategoriId,
+        'brand_id': brand?.id,
+        'kategori_id': category?.id,
       };
 }

@@ -1,6 +1,9 @@
+// lib/pages/home.dart
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../services/api_service.dart';
 import 'categories_nano.dart';
 import 'categories_piko.dart';
 import 'create_sales_order.dart';
@@ -20,22 +23,41 @@ class _HomeScreenState extends State<HomeScreen> {
   int _currentPage = 0;
   Timer? _timer;
 
-  final List<String> _bannerImages = [
+  // Fallback asset kalau API kosong/error
+  static const List<String> _fallbackAssets = [
     'assets/images/bannernanolite1.png',
     'assets/images/bannernanolite.jpg',
     'assets/images/bannerpikooo.jpg',
     'assets/images/bannerpikolite.jpg',
   ];
 
+  // Sumber banner yang dipakai UI (URL http(s) atau path asset)
+  List<String> _banners = _fallbackAssets;
+
   @override
   void initState() {
     super.initState();
+    _loadBanners();
     _startAutoScroll();
+  }
+
+  Future<void> _loadBanners() async {
+    try {
+      final remote = await ApiService.fetchBannerImages();
+      if (!mounted) return;
+      setState(() {
+        _banners = remote.isNotEmpty ? remote : _fallbackAssets;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _banners = _fallbackAssets);
+    }
   }
 
   void _startAutoScroll() {
     _timer = Timer.periodic(const Duration(seconds: 4), (_) {
-      final nextPage = (_currentPage + 1) % _bannerImages.length;
+      if (!mounted || _banners.isEmpty) return;
+      final nextPage = (_currentPage + 1) % _banners.length;
       _pageController.animateToPage(
         nextPage,
         duration: const Duration(milliseconds: 500),
@@ -50,6 +72,8 @@ class _HomeScreenState extends State<HomeScreen> {
     _pageController.dispose();
     super.dispose();
   }
+
+  bool _isRemote(String p) => p.startsWith('http://') || p.startsWith('https://');
 
   @override
   Widget build(BuildContext context) {
@@ -68,26 +92,42 @@ class _HomeScreenState extends State<HomeScreen> {
         child: SingleChildScrollView(
           child: Column(
             children: [
-              AspectRatio(
-                aspectRatio: 16 / 6,
-                child: PageView.builder(
-                  controller: _pageController,
-                  itemCount: _bannerImages.length,
-                  onPageChanged: (index) => setState(() => _currentPage = index),
-                  itemBuilder: (context, index) {
-                    return Image.asset(
-                      _bannerImages[index],
-                      fit: BoxFit.contain,
-                      width: double.infinity,
-                    );
-                  },
+              // ====== Banner: jarak atas sangat tipis (2px), full-bleed kiri–kanan ======
+              const SizedBox(height: 2),
+              SizedBox(
+                width: double.infinity, // mentok kiri–kanan
+                child: AspectRatio(
+                  aspectRatio: 16 / 6,
+                  child: PageView.builder(
+                    controller: _pageController,
+                    itemCount: _banners.length,
+                    onPageChanged: (index) => setState(() => _currentPage = index),
+                    itemBuilder: (context, index) {
+                      final src = _banners[index];
+                      const fit = BoxFit.fitWidth; // gambar tidak terpotong
+                      return _isRemote(src)
+                          ? Image.network(
+                              src,
+                              fit: fit,
+                              width: double.infinity,
+                              gaplessPlayback: true,
+                              filterQuality: FilterQuality.medium,
+                            )
+                          : Image.asset(
+                              src,
+                              fit: fit,
+                              width: double.infinity,
+                              filterQuality: FilterQuality.medium,
+                            );
+                    },
+                  ),
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10), // indikator sedikit turun
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: List.generate(
-                  _bannerImages.length,
+                  _banners.length,
                   (index) => Container(
                     margin: const EdgeInsets.symmetric(horizontal: 4),
                     width: _currentPage == index ? 12 : 8,
@@ -103,7 +143,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(height: 16),
 
-              // BUTTON NANOLITE & PIKOLITE
+              // ====== Tombol Nanolite & Pikolite ======
               Padding(
                 padding: EdgeInsets.all(padding),
                 child: Column(
@@ -118,13 +158,19 @@ class _HomeScreenState extends State<HomeScreen> {
                         _buildCircleIcon(
                           Icons.lightbulb,
                           'Nanolite',
-                          () => Navigator.push(context, MaterialPageRoute(builder: (_) => CategoriesNanoScreen())),
+                          () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => CategoriesNanoScreen()),
+                          ),
                           isTablet,
                         ),
                         _buildCircleIcon(
                           Icons.lightbulb_outline,
                           'Pikolite',
-                          () => Navigator.push(context, MaterialPageRoute(builder: (_) => CategoriesPikoScreen())),
+                          () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => CategoriesPikoScreen()),
+                          ),
                           isTablet,
                         ),
                       ],
@@ -144,7 +190,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     const SizedBox(height: 20),
 
-                    // GRID MENU
+                    // ====== Grid menu ======
                     GridView.count(
                       crossAxisCount: 2,
                       shrinkWrap: true,
@@ -154,16 +200,28 @@ class _HomeScreenState extends State<HomeScreen> {
                       childAspectRatio: isTablet ? 1.8 : 1.6,
                       children: [
                         _buildBoxIcon(Icons.account_box, 'Customer', () {
-                          Navigator.push(context, MaterialPageRoute(builder: (_) => CustomerScreen()));
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => CustomerScreen()),
+                          );
                         }, isTablet),
                         _buildBoxIcon(Icons.shopping_cart, 'Sales Order', () {
-                          Navigator.push(context, MaterialPageRoute(builder: (_) => SalesOrderScreen()));
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => SalesOrderScreen()),
+                          );
                         }, isTablet),
                         _buildBoxIcon(Icons.history, 'Return', () {
-                          Navigator.push(context, MaterialPageRoute(builder: (_) => ReturnScreen()));
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => ReturnScreen()),
+                          );
                         }, isTablet),
                         _buildBoxIcon(Icons.workspace_premium, 'Garansi', () {
-                          Navigator.push(context, MaterialPageRoute(builder: (_) => GaransiScreen()));
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => GaransiScreen()),
+                          );
                         }, isTablet),
                       ],
                     ),
@@ -176,7 +234,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
 
-      // BOTTOM NAVIGATION FIXED
+      // ====== Bottom Navigation ======
       bottomNavigationBar: Container(
         color: const Color(0xFF0A1B2D),
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
@@ -190,7 +248,10 @@ class _HomeScreenState extends State<HomeScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
               _navItem(Icons.home, 'Home', onPressed: () {
-                Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => HomeScreen()));
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (_) => HomeScreen()),
+                );
               }),
               _navItem(Icons.shopping_cart, 'Create Order', onPressed: () async {
                 final created = await Navigator.push<bool>(
@@ -208,7 +269,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 }
               }),
               _navItem(Icons.person, 'Profile', onPressed: () {
-                Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen()));
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => ProfileScreen()),
+                );
               }),
             ],
           ),
@@ -217,7 +281,12 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildCircleIcon(IconData icon, String label, VoidCallback onPressed, bool isTablet) {
+  Widget _buildCircleIcon(
+    IconData icon,
+    String label,
+    VoidCallback onPressed,
+    bool isTablet,
+  ) {
     final double iconSize = isTablet ? 24 : 20;
     final double fontSize = isTablet ? 18 : 14;
     final double containerHeight = isTablet ? 60 : 50;
