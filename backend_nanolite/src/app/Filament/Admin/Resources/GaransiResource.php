@@ -36,6 +36,7 @@ use Filament\Tables\Actions\CreateAction;
 use App\Exports\FilteredGaransiExport;
 use Filament\Forms\Components\Checkbox;
 use Maatwebsite\Excel\Facades\Excel;
+use App\Support\AddressFormatter;
 
 class GaransiResource extends Resource
 {
@@ -189,7 +190,48 @@ class GaransiResource extends Resource
                 TextColumn::make('customerCategory.name')->label('Kategori Customer')->sortable()->searchable(),
 
                 TextColumn::make('phone')->label('Phone')->sortable(),
-                TextColumn::make('address')->label('Address')->limit(50),
+                TextColumn::make('address')
+                    ->label('Address')
+                    ->formatStateUsing(function ($state) {
+                        if (blank($state)) return '-';
+
+                        // Jika string JSON, decode dulu
+                        if (is_string($state)) {
+                            $t = trim($state);
+                            if (\Illuminate\Support\Str::startsWith($t, '{')) {
+                                $decoded = json_decode($t, true);
+                                if (json_last_error() === JSON_ERROR_NONE) {
+                                    $state = $decoded;
+                                } else {
+                                    return $t; // sudah string biasa
+                                }
+                            } else {
+                                return $t; // string biasa -> langsung pakai
+                            }
+                        }
+
+                        // Array -> susun satu baris
+                        $addr = $state['alamat_detail'][0] ?? $state[0] ?? $state;
+                        $parts = array_filter([
+                            $addr['detail_alamat'] ?? null,
+                            $addr['kelurahan']['name'] ?? $addr['kelurahan_name'] ?? null,
+                            $addr['kecamatan']['name'] ?? $addr['kecamatan_name'] ?? null,
+                            $addr['kota_kab']['name'] ?? $addr['kota_kab_name'] ?? null,
+                            $addr['provinsi']['name'] ?? $addr['provinsi_name'] ?? null,
+                            $addr['kode_pos'] ?? null,
+                        ], fn ($v) => filled($v) && strtolower((string) $v) !== 'null');
+
+                        // Normalisasi spasi & koma supaya bersih
+                        $text = $parts ? implode(', ', $parts) : '-';
+                        $text = preg_replace('/\s+/', ' ', $text);
+                        return trim($text, ", ");
+                    })
+                    // pastikan hanya 1 baris + ada ellipsis
+                    ->lineClamp(1)                             // kalau ada, ini paling simple
+                    // kalau `lineClamp` tidak tersedia di versimu, pakai CSS di bawah sebagai gantinya:
+                    // ->extraAttributes(['style' => 'white-space: nowrap; max-width: 420px; overflow: hidden; text-overflow: ellipsis;'])
+                    ->tooltip(fn ($state) => is_string($state) ? $state : null),
+
 
                 TextColumn::make('products_details')->label('Detail Produk')->html()->sortable(),
                 TextColumn::make('purchase_date')->label('Tanggal Pembelian')->date()->sortable(),

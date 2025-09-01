@@ -129,7 +129,14 @@ class ProductReturnResource extends Resource
                 Textarea::make('reason')->label('Alasan Return')->required(),
                 Textarea::make('note')->label('Catatan Tambahan')->nullable(),
 
-                FileUpload::make('image')->label('Gambar')->image()->directory('return')->nullable(),
+                FileUpload::make('image')
+                    ->label('Gambar')
+                    ->image()
+                    ->disk('public')          // ⬅️ penting
+                    ->directory('return')
+                    ->visibility('public')
+                    ->nullable(),
+
 
                 Repeater::make('products')->label('Detail Produk')->reactive()
                     ->schema([
@@ -183,7 +190,36 @@ class ProductReturnResource extends Resource
                 TextColumn::make('category.name')->label('Kategori Customer')->sortable()->searchable(),
 
                 TextColumn::make('phone')->label('Phone')->sortable(),
-                TextColumn::make('address')->label('Address')->limit(50),
+                TextColumn::make('address')
+    ->label('Address')
+    ->formatStateUsing(function ($state) {
+        // Jika string JSON -> decode
+        if (is_string($state) && str_starts_with(trim($state), '{')) {
+            $decoded = json_decode($state, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $state = $decoded;
+            }
+        }
+
+        // Jika array/JSON, ambil bagian yang penting
+        if (is_array($state)) {
+            $detail = data_get($state, 'detail_alamat') ?? data_get($state, '0.detail_alamat') ?? '';
+            $kel    = data_get($state, 'kelurahan.name') ?? data_get($state, 'kelurahan_name') ?? data_get($state, '0.kelurahan.name') ?? data_get($state, '0.kelurahan_name');
+            $kec    = data_get($state, 'kecamatan.name') ?? data_get($state, 'kecamatan_name') ?? data_get($state, '0.kecamatan.name') ?? data_get($state, '0.kecamatan_name');
+            $kota   = data_get($state, 'kota_kab.name') ?? data_get($state, 'kota_kab_name') ?? data_get($state, '0.kota_kab.name') ?? data_get($state, '0.kota_kab_name');
+            $prov   = data_get($state, 'provinsi.name') ?? data_get($state, 'provinsi_name') ?? data_get($state, '0.provinsi.name') ?? data_get($state, '0.provinsi_name');
+            $kode   = data_get($state, 'kode_pos') ?? data_get($state, '0.kode_pos');
+
+            $parts = array_filter([$detail, $kel, $kec, $kota, $prov, $kode], fn ($v) =>
+                filled($v) && strtolower((string)$v) !== 'null'
+            );
+            return $parts ? implode(', ', $parts) : '-';
+        }
+
+        // Sudah string biasa
+        return $state ?: '-';
+    }),
+
 
                 TextColumn::make('products_details')->label('Detail Produk')->html()->sortable(),
 
@@ -197,7 +233,31 @@ class ProductReturnResource extends Resource
                     ->getStateUsing(fn ($record) => ($note = trim((string) $record->note ?? '')) !== '' ? $note : '-')
                     ->wrap()->extraAttributes(['style' => 'white-space: normal;']),
 
-                ImageColumn::make('image')->label('Gambar')->circular(),
+                    ImageColumn::make('image')
+                    ->label('Gambar')
+                    ->getStateUsing(function ($record) {
+                        $val = $record->image;
+                
+                        if (is_string($val) && str_starts_with($val, '[')) {
+                            $decoded = json_decode($val, true);
+                            $val = is_array($decoded) ? ($decoded[0] ?? null) : $val;
+                        }
+                        if (is_array($val)) {
+                            $val = $val[0] ?? null;
+                        }
+                        if (blank($val)) {
+                            return null;
+                        }
+                
+                        $val = preg_replace('#^/?storage/#', '', $val);
+                        if (preg_match('#^https?://#', $val)) {
+                            return $val;
+                        }
+                        return asset('storage/' . ltrim($val, '/'));
+                    })
+                    ->disk('public')
+                    ->circular(),
+                
 
                 BadgeColumn::make('status')->label('Status')
                     ->formatStateUsing(fn (string $state): string => match ($state) {

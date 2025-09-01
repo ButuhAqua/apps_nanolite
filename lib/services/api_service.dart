@@ -1326,66 +1326,60 @@ class ApiService {
 
   // ---------- RETURNS ----------
   static Future<bool> createReturn({
-    required int companyId,
-    required int departmentId,
-    required int employeeId,
-    required int customerId,
-    required int categoryId,
-    required String phone,
-    required AddressInput address,
-    required int amount,
-    required String reason,
-    String? note,
-    required List<Map<String, dynamic>> products,
-    List<XFile>? photos,
-  }) async {
-    final url = _buildUri('product-returns');
-    final headers = await _authorizedHeaders();
+  required int companyId,
+  required int departmentId,
+  required int employeeId,
+  required int customerId,
+  required int categoryId,
+  required String phone,
+  required AddressInput address, // boleh tetap, kita ambil detailAlamat-nya saja
+  required int amount,
+  required String reason,
+  String? note,
+  required List<Map<String, dynamic>> products,
+  List<XFile>? photos,
+}) async {
+  final url = _buildUri('product-returns');
+  final headers = await _authorizedHeaders();
 
-    final req = http.MultipartRequest('POST', url);
-    req.headers.addAll(headers);
+  final req = http.MultipartRequest('POST', url);
+  req.headers.addAll(headers);
 
-    req.fields['company_id'] = companyId.toString();
-    req.fields['department_id'] = departmentId.toString();
-    req.fields['employee_id'] = employeeId.toString();
-    req.fields['customer_id'] = customerId.toString();
-    req.fields['customer_categories_id'] = categoryId.toString();
-    req.fields['phone'] = phone;
-    req.fields['amount'] = amount.toString();
-    req.fields['reason'] = reason;
-    if (note != null && note.isNotEmpty) req.fields['note'] = note;
+  req.fields['company_id'] = companyId.toString();
+  req.fields['department_id'] = departmentId.toString();
+  req.fields['employee_id'] = employeeId.toString();
+  req.fields['customer_id'] = customerId.toString();
+  req.fields['customer_categories_id'] = categoryId.toString();
+  req.fields['phone'] = phone;
+  req.fields['amount'] = amount.toString();
+  req.fields['reason'] = reason;
+  if (note != null && note.isNotEmpty) req.fields['note'] = note;
 
-    req.fields['address[0][provinsi_code]'] = address.provinsiCode;
-    req.fields['address[0][kota_kab_code]'] = address.kotaKabCode;
-    req.fields['address[0][kecamatan_code]'] = address.kecamatanCode;
-    req.fields['address[0][kelurahan_code]'] = address.kelurahanCode;
-    if (address.kodePos != null && address.kodePos!.isNotEmpty) {
-      req.fields['address[0][kode_pos]'] = address.kodePos!;
-    }
-    req.fields['address[0][detail_alamat]'] = address.detailAlamat;
+  // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  // GANTI: kirim address sebagai TEKS (bukan array) agar tabel tidak tampil JSON
+  req.fields['address'] = address.detailAlamat;
+  // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
-    req.fields['products'] = jsonEncode(products);
+  // produk tetap sama
+  req.fields['products'] = jsonEncode(products);
 
-    if (photos != null && photos.isNotEmpty) {
-      for (final p in photos) {
-        if (kIsWeb) {
-          final bytes = await p.readAsBytes();
-          req.files.add(http.MultipartFile.fromBytes('image[]', bytes,
-              filename: p.name));
-        } else {
-          req.files.add(await http.MultipartFile.fromPath('image[]', p.path));
-        }
+  if (photos != null && photos.isNotEmpty) {
+    for (final p in photos) {
+      if (kIsWeb) {
+        final bytes = await p.readAsBytes();
+        req.files.add(http.MultipartFile.fromBytes('image[]', bytes, filename: p.name));
+      } else {
+        req.files.add(await http.MultipartFile.fromPath('image[]', p.path));
       }
     }
-
-    final streamed = await req.send();
-    final res = await http.Response.fromStream(streamed);
-
-    // ignore: avoid_print
-    print('DEBUG createReturn => ${res.statusCode} ${res.body}');
-
-    return res.statusCode == 200 || res.statusCode == 201;
   }
+
+  final streamed = await req.send();
+  final res = await http.Response.fromStream(streamed);
+  print('DEBUG createReturn => ${res.statusCode} ${res.body}');
+  return res.statusCode == 200 || res.statusCode == 201;
+}
+
 
   static Future<List<OptionItem>> fetchColors() async => <OptionItem>[];
 

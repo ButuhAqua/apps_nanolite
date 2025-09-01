@@ -160,7 +160,14 @@ class CustomerResource extends Resource
                 ->columns(3)->defaultItems(1)
                 ->disableItemCreation()->disableItemDeletion()->dehydrated(),
 
-            FileUpload::make('image')->label('Gambar')->image()->directory('customers')->nullable(),
+                FileUpload::make('image')
+                ->label('Gambar')
+                ->image()
+                ->disk('public')          // ⬅️ penting
+                ->directory('customers')
+                ->visibility('public')
+                ->nullable(),
+            
 
             Select::make('status_pengajuan')
                 ->label('Status Pengajuan')
@@ -225,7 +232,40 @@ class CustomerResource extends Resource
                     ->getStateUsing(fn ($record) => $record->reward_point ?? 0)
                     ->sortable()->alignCenter(),
 
-                ImageColumn::make('image')->label('Gambar')->square(),
+                    ImageColumn::make('image')
+                    ->label('Gambar')
+                    ->getStateUsing(function ($record) {
+                        $val = $record->image;
+                
+                        // Jika tersimpan sebagai JSON string: "[\"path1\",\"path2\"]"
+                        if (is_string($val) && str_starts_with($val, '[')) {
+                            $decoded = json_decode($val, true);
+                            $val = is_array($decoded) ? ($decoded[0] ?? null) : $val;
+                        }
+                
+                        // Jika array langsung
+                        if (is_array($val)) {
+                            $val = $val[0] ?? null;
+                        }
+                
+                        if (blank($val)) {
+                            return null;
+                        }
+                
+                        // Buat absolut: pastikan tanpa prefix "storage/"
+                        $val = preg_replace('#^/?storage/#', '', $val);
+                
+                        // Kalau sudah absolut, langsung pakai
+                        if (preg_match('#^https?://#', $val)) {
+                            return $val;
+                        }
+                
+                        // Perlu symlink storage:link
+                        return asset('storage/' . ltrim($val, '/'));
+                    })
+                    ->disk('public')
+                    ->square(),
+                
 
                 BadgeColumn::make('status_pengajuan')
                     ->label('Status Pengajuan')
