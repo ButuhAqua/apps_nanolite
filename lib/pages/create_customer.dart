@@ -15,7 +15,7 @@ class CreateCustomerScreen extends StatefulWidget {
 }
 
 class _CreateCustomerScreenState extends State<CreateCustomerScreen> {
-  // ===== Image picker state (preview only - tidak dikirim ke API) =====
+  // ===== Image picker state (preview only) =====
   final ImagePicker _picker = ImagePicker();
   final List<XFile> _photos = [];
 
@@ -29,7 +29,8 @@ class _CreateCustomerScreenState extends State<CreateCustomerScreen> {
 
   Future<void> _pickFromCamera() async {
     try {
-      final file = await _picker.pickImage(source: ImageSource.camera, imageQuality: 85);
+      final file =
+          await _picker.pickImage(source: ImageSource.camera, imageQuality: 85);
       if (!mounted) return;
       if (file != null) setState(() => _photos.add(file));
     } catch (_) {}
@@ -43,23 +44,18 @@ class _CreateCustomerScreenState extends State<CreateCustomerScreen> {
   final _emailCtrl = TextEditingController();
   final _gmapsCtrl = TextEditingController();
 
-  // Address (kode laravolt + detail)
-  // final _provCtrl = TextEditingController();
-  // final _cityCtrl = TextEditingController();
-  // final _distCtrl = TextEditingController();
-  // final _villCtrl = TextEditingController();
   final _zipCtrl = TextEditingController();
   final _detailAddrCtrl = TextEditingController();
 
   // ===== Dropdown data dari backend =====
   List<OptionItem> _departments = [];
-  List<OptionItem> _employees   = [];
-  List<OptionItem> _categories  = []; // dari CustomerCategories API
-  List<OptionItem> _programs    = []; // dari CustomerProgram API (by category)
+  List<OptionItem> _employees = [];
+  List<OptionItem> _categories = [];
+  List<OptionItem> _programs = [];
   List<OptionItem> _provinces = [];
-  List<OptionItem> _cities    = [];
+  List<OptionItem> _cities = [];
   List<OptionItem> _districts = [];
-  List<OptionItem> _villages  = [];
+  List<OptionItem> _villages = [];
 
   // Selected IDs
   int? _deptId;
@@ -70,13 +66,12 @@ class _CreateCustomerScreenState extends State<CreateCustomerScreen> {
   int? _cityCode;
   int? _distCode;
   int? _villCode;
-  
 
   // UI state
-  bool _loadingOptions   = false;
+  bool _loadingOptions = false;
   bool _loadingEmployees = false;
-  bool _loadingPrograms  = false;
-  bool _submitting       = false;
+  bool _loadingPrograms = false;
+  bool _submitting = false;
 
   @override
   void initState() {
@@ -97,7 +92,8 @@ class _CreateCustomerScreenState extends State<CreateCustomerScreen> {
   }
 
   // ===== helper: masukkan placeholder bila list kosong =====
-  List<OptionItem> _withPlaceholder(List<OptionItem> src, {String label = 'Tidak ada data'}) {
+  List<OptionItem> _withPlaceholder(List<OptionItem> src,
+      {String label = 'Tidak ada data'}) {
     if (src.isEmpty || (src.length == 1 && src.first.id == -1)) {
       return [OptionItem(id: -1, name: label)];
     }
@@ -105,27 +101,37 @@ class _CreateCustomerScreenState extends State<CreateCustomerScreen> {
     return src.where((e) => seen.add(e.id)).toList();
   }
 
-    // ====== LOAD OPTIONS (department, category) ======
+  // ===== helper: cari nama option berdasarkan id (dipakai utk kirim *_name) =====
+  String? _findName(List<OptionItem> list, int? id) {
+    if (id == null) return null;
+    try {
+      return list.firstWhere((e) => e.id == id).name;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ====== LOAD OPTIONS (department, category) ======
   Future<void> _loadOptions() async {
     setState(() => _loadingOptions = true);
     try {
       final depts = await ApiService.fetchDepartments();
-      final cats  = await ApiService.fetchCustomerCategoriesAll();
+      final cats = await ApiService.fetchCustomerCategoriesAll();
 
       if (!mounted) return;
       setState(() {
         _departments = _withPlaceholder(depts);
-        _categories  = _withPlaceholder(cats);
+        _categories = _withPlaceholder(cats);
 
         _deptId = (_departments.isNotEmpty && _departments.first.id != -1)
             ? _departments.first.id
             : null;
-        _catId  = (_categories.isNotEmpty  && _categories.first.id  != -1)
+        _catId = (_categories.isNotEmpty && _categories.first.id != -1)
             ? _categories.first.id
             : null;
 
         _programs = _withPlaceholder([]);
-        _progId   = null;
+        _progId = null;
       });
 
       if (_deptId != null) {
@@ -144,7 +150,6 @@ class _CreateCustomerScreenState extends State<CreateCustomerScreen> {
     }
   }
 
-  /// 🔥 Tambahkan fungsi ini setelah _loadOptions()
   Future<void> _onSelectDepartment(int? id) async {
     setState(() {
       _deptId = id;
@@ -178,7 +183,6 @@ class _CreateCustomerScreenState extends State<CreateCustomerScreen> {
     }
   }
 
-
   // === Load program by category (primary) + fallback all ===
   Future<void> _onCategoryChanged(int? id) async {
     setState(() {
@@ -189,7 +193,7 @@ class _CreateCustomerScreenState extends State<CreateCustomerScreen> {
     });
 
     if (id == null || id == -1) {
-      await _loadAllProgramsFallback(); // ✅ fallback
+      await _loadAllProgramsFallback();
       return;
     }
 
@@ -200,10 +204,12 @@ class _CreateCustomerScreenState extends State<CreateCustomerScreen> {
       if (progs.isNotEmpty) {
         setState(() {
           _programs = _withPlaceholder(progs);
-          _progId   = (_programs.isNotEmpty && _programs.first.id != -1) ? _programs.first.id : null;
+          _progId = (_programs.isNotEmpty && _programs.first.id != -1)
+              ? _programs.first.id
+              : null;
         });
       } else {
-        await _loadAllProgramsFallback(); // ✅ fallback
+        await _loadAllProgramsFallback();
       }
     } catch (e) {
       if (!mounted) return;
@@ -215,14 +221,13 @@ class _CreateCustomerScreenState extends State<CreateCustomerScreen> {
     }
   }
 
-  /// === NEW: fallback load semua program jika kategori kosong ===
   Future<void> _loadAllProgramsFallback() async {
     try {
       final progs = await ApiService.fetchCustomerPrograms();
       if (!mounted) return;
       setState(() {
         _programs = _withPlaceholder(progs);
-        _progId   = (_programs.isNotEmpty && _programs.first.id != -1)
+        _progId = (_programs.isNotEmpty && _programs.first.id != -1)
             ? _programs.first.id
             : null;
       });
@@ -237,130 +242,132 @@ class _CreateCustomerScreenState extends State<CreateCustomerScreen> {
   }
 
   Future<void> _loadProvinces() async {
-  final provs = await ApiService.fetchProvinces();
-  if (!mounted) return;
-  setState(() {
-    _provinces = _withPlaceholder(provs);
-    _provCode = null;
-    _cities = [];
-    _districts = [];
-    _villages = [];
-  });
-}
-
-Future<void> _onProvinceChanged(int? code) async {
-  setState(() {
-    _provCode = code;
-    _cityCode = null;
-    _distCode = null;
-    _villCode = null;
-    _cities = [];
-    _districts = [];
-    _villages = [];
-  });
-  if (code != null && code != -1) {
-    final cities = await ApiService.fetchCities('$code');
+    final provs = await ApiService.fetchProvinces();
     if (!mounted) return;
-    setState(() => _cities = _withPlaceholder(cities));
+    setState(() {
+      _provinces = _withPlaceholder(provs);
+      _provCode = null;
+      _cities = [];
+      _districts = [];
+      _villages = [];
+    });
   }
-}
 
-Future<void> _onCityChanged(int? code) async {
-  setState(() {
-    _cityCode = code;
-    _distCode = null;
-    _villCode = null;
-    _districts = [];
-    _villages = [];
-  });
-  if (code != null && code != -1) {
-    final dists = await ApiService.fetchDistricts('$code');
-    if (!mounted) return;
-    setState(() => _districts = _withPlaceholder(dists));
+  Future<void> _onProvinceChanged(int? code) async {
+    setState(() {
+      _provCode = code;
+      _cityCode = null;
+      _distCode = null;
+      _villCode = null;
+      _cities = [];
+      _districts = [];
+      _villages = [];
+    });
+    if (code != null && code != -1) {
+      final cities = await ApiService.fetchCities('$code');
+      if (!mounted) return;
+      setState(() => _cities = _withPlaceholder(cities));
+    }
   }
-}
 
-Future<void> _onDistrictChanged(int? code) async {
-  setState(() {
-    _distCode = code;
-    _villCode = null;
-    _villages = [];
-  });
-  if (code != null && code != -1) {
-    final vills = await ApiService.fetchVillages('$code');
-    if (!mounted) return;
-    setState(() => _villages = _withPlaceholder(vills));
+  Future<void> _onCityChanged(int? code) async {
+    setState(() {
+      _cityCode = code;
+      _distCode = null;
+      _villCode = null;
+      _districts = [];
+      _villages = [];
+    });
+    if (code != null && code != -1) {
+      final dists = await ApiService.fetchDistricts('$code');
+      if (!mounted) return;
+      setState(() => _districts = _withPlaceholder(dists));
+    }
   }
-}
 
+  Future<void> _onDistrictChanged(int? code) async {
+    setState(() {
+      _distCode = code;
+      _villCode = null;
+      _villages = [];
+    });
+    if (code != null && code != -1) {
+      final vills = await ApiService.fetchVillages('$code');
+      if (!mounted) return;
+      setState(() => _villages = _withPlaceholder(vills));
+    }
+  }
 
   // ====== SUBMIT ======
   Future<void> _submit() async {
-    // tutup keyboard dulu
     FocusScope.of(context).unfocus();
 
     // Validasi minimum
     if (_deptId == null ||
-    _empId == null ||
-    _catId == null ||
-    _nameCtrl.text.trim().isEmpty ||
-    _phoneCtrl.text.trim().isEmpty ||
-    _provCode == null ||
-    _cityCode == null ||
-    _distCode == null ||
-    _villCode == null ||
-    _detailAddrCtrl.text.trim().isEmpty) {
-  ScaffoldMessenger.of(context).showSnackBar(
-    const SnackBar(content: Text('Lengkapi field yang bertanda *')),
-  );
-  return;
-}
+        _empId == null ||
+        _catId == null ||
+        _nameCtrl.text.trim().isEmpty ||
+        _phoneCtrl.text.trim().isEmpty ||
+        _provCode == null ||
+        _cityCode == null ||
+        _distCode == null ||
+        _villCode == null ||
+        _detailAddrCtrl.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Lengkapi field yang bertanda *')),
+      );
+      return;
+    }
 
     setState(() => _submitting = true);
 
+    // Address lengkap: kirim CODE + NAME (biar dashboard bisa render full)
     final addr = AddressInput(
-    provinsiCode: _provCode?.toString() ?? '',
-    kotaKabCode: _cityCode?.toString() ?? '',
-    kecamatanCode: _distCode?.toString() ?? '',
-    kelurahanCode: _villCode?.toString() ?? '',
-    detailAlamat: _detailAddrCtrl.text.trim(),
-    kodePos: _zipCtrl.text.trim().isEmpty ? null : _zipCtrl.text.trim(),
-  );
-
-    try {
-    final ok = await ApiService.createCustomer(
-      companyId: 1, // sementara hardcode, nanti bisa dari login
-      departmentId: _deptId!,
-      employeeId: _empId!,
-      name: _nameCtrl.text.trim(),
-      phone: _phoneCtrl.text.trim(),
-      email: _emailCtrl.text.trim(),
-      customerCategoryId: _catId!,
-      customerProgramId: _progId,
-      gmapsLink: _gmapsCtrl.text.trim(),
-      address: AddressInput(
-        provinsiCode: _provCode?.toString() ?? '',
-        kotaKabCode: _cityCode?.toString() ?? '',
-        kecamatanCode: _distCode?.toString() ?? '',
-        kelurahanCode: _villCode?.toString() ?? '',
-        detailAlamat: _detailAddrCtrl.text.trim(),
-        kodePos: _zipCtrl.text.trim().isEmpty ? null : _zipCtrl.text.trim(),
-      ),
-      photos: _photos, // kirim List<XFile>
+      provinsiCode: _provCode!.toString(),
+      kotaKabCode: _cityCode!.toString(),
+      kecamatanCode: _distCode!.toString(),
+      kelurahanCode: _villCode!.toString(),
+      detailAlamat: _detailAddrCtrl.text.trim(),
+      kodePos: _zipCtrl.text.trim().isEmpty ? null : _zipCtrl.text.trim(),
+      provinsiName: _findName(_provinces, _provCode),
+      kotaKabName: _findName(_cities, _cityCode),
+      kecamatanName: _findName(_districts, _distCode),
+      kelurahanName: _findName(_villages, _villCode),
     );
 
-
+    try {
+      final ok = await ApiService.createCustomer(
+        companyId: 1, // sesuaikan
+        departmentId: _deptId!,
+        employeeId: _empId!,
+        name: _nameCtrl.text.trim(),
+        phone: _phoneCtrl.text.trim(),
+        email: _emailCtrl.text.trim().isEmpty
+            ? null
+            : _emailCtrl.text.trim(), // kirim null jika kosong
+        customerCategoryId: _catId!,
+        customerProgramId: _progId,
+        gmapsLink: _gmapsCtrl.text.trim().isEmpty
+            ? null
+            : _gmapsCtrl.text.trim(),
+        address: addr,
+        photos: _photos,
+      );
 
       if (!mounted) return;
 
       if (ok) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Customer berhasil dibuat'), backgroundColor: Colors.green),
+          const SnackBar(
+              content: Text('Customer berhasil dibuat'),
+              backgroundColor: Colors.green),
         );
         Navigator.pop(context, true);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Gagal membuat customer'), backgroundColor: Colors.red),
+          const SnackBar(
+              content: Text('Gagal membuat customer'),
+              backgroundColor: Colors.red),
         );
       }
     } catch (e) {
@@ -375,16 +382,14 @@ Future<void> _onDistrictChanged(int? code) async {
 
   // ====== AUTO ZIP BY VILLAGE ======
   Future<void> _onVillageChanged(String code) async {
-  final maybeZip = await ApiService.fetchPostalCodeByVillage(code);
-  if (!mounted) return;
-  if (maybeZip != null && maybeZip.isNotEmpty) {
-    setState(() {
-      _zipCtrl.text = maybeZip;  // ⬅️ update UI
-    });
+    final maybeZip = await ApiService.fetchPostalCodeByVillage(code);
+    if (!mounted) return;
+    if (maybeZip != null && maybeZip.isNotEmpty) {
+      setState(() {
+        _zipCtrl.text = maybeZip;
+      });
+    }
   }
-}
-
-
 
   @override
   Widget build(BuildContext context) {
@@ -406,8 +411,9 @@ Future<void> _onDistrictChanged(int? code) async {
                 child: LayoutBuilder(
                   builder: (context, constraints) {
                     final bool isTablet = constraints.maxWidth >= 600;
-                    final double fieldWidth =
-                        isTablet ? (constraints.maxWidth - 60) / 2 : (constraints.maxWidth - 20) / 2;
+                    final double fieldWidth = isTablet
+                        ? (constraints.maxWidth - 60) / 2
+                        : (constraints.maxWidth - 20) / 2;
 
                     return AbsorbPointer(
                       absorbing: disabledAll,
@@ -453,12 +459,16 @@ Future<void> _onDistrictChanged(int? code) async {
                                   width: fieldWidth,
                                   value: _empId,
                                   items: _withPlaceholder(_employees),
-                                  onChanged: (v) => setState(() => _empId = (v == -1 ? null : v)),
+                                  onChanged: (v) => setState(
+                                      () => _empId = (v == -1 ? null : v)),
                                   loading: _loadingEmployees,
                                 ),
-                                _textField('Nama Customer *', _nameCtrl, fieldWidth),
-                                _textField('Telepon *', _phoneCtrl, fieldWidth, keyboard: TextInputType.phone),
-                                _textField('Email', _emailCtrl, fieldWidth, keyboard: TextInputType.emailAddress),
+                                _textField(
+                                    'Nama Customer *', _nameCtrl, fieldWidth),
+                                _textField('Telepon *', _phoneCtrl, fieldWidth,
+                                    keyboard: TextInputType.phone),
+                                _textField('Email', _emailCtrl, fieldWidth,
+                                    keyboard: TextInputType.emailAddress),
 
                                 // ==== KATEGORI ====
                                 _dropdownInt(
@@ -475,11 +485,13 @@ Future<void> _onDistrictChanged(int? code) async {
                                   width: fieldWidth,
                                   value: _progId,
                                   items: _withPlaceholder(_programs),
-                                  onChanged: (v) => setState(() => _progId = (v == -1 ? null : v)),
+                                  onChanged: (v) => setState(
+                                      () => _progId = (v == -1 ? null : v)),
                                   loading: _loadingPrograms,
                                 ),
 
-                                _textField('Link Google Maps', _gmapsCtrl, fieldWidth),
+                                _textField(
+                                    'Link Google Maps', _gmapsCtrl, fieldWidth),
                               ],
                             ),
 
@@ -487,7 +499,9 @@ Future<void> _onDistrictChanged(int? code) async {
 
                             // ========= ALAMAT =========
                             const Text('Alamat',
-                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold)),
                             const SizedBox(height: 12),
                             Container(
                               width: double.infinity,
@@ -499,40 +513,57 @@ Future<void> _onDistrictChanged(int? code) async {
                               child: LayoutBuilder(
                                 builder: (context, inner) {
                                   const double gap = 20;
-                                  final bool isTabletInside = inner.maxWidth >= 600;
-                                  final double innerFieldWidth =
-                                      isTabletInside ? (inner.maxWidth - 60) / 2 : (inner.maxWidth - gap) / 2;
+                                  final bool isTabletInside =
+                                      inner.maxWidth >= 600;
+                                  final double innerFieldWidth = isTabletInside
+                                      ? (inner.maxWidth - 60) / 2
+                                      : (inner.maxWidth - gap) / 2;
 
                                   return Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Wrap(
                                         spacing: gap,
                                         runSpacing: 16,
                                         children: [
-                                        _dropdownInt('Provinsi *',
-                                        width: innerFieldWidth,
-                                        value: _provCode, items: _provinces, onChanged: (v) => _onProvinceChanged(v)),
-                                      _dropdownInt('Kota/Kabupaten *',
-                                        width: innerFieldWidth,
-                                        value: _cityCode, items: _cities, onChanged: (v) => _onCityChanged(v)),
-                                      _dropdownInt('Kecamatan *',
-                                        width: innerFieldWidth,
-                                        value: _distCode, items: _districts, onChanged: (v) => _onDistrictChanged(v)),
-                                      _dropdownInt(
-                                      'Kelurahan *',
-                                      width: innerFieldWidth,
-                                      value: _villCode,
-                                      items: _villages,
-                                      onChanged: (v) {
-                                        setState(() => _villCode = v);
-                                        if (v != null) _onVillageChanged(v.toString()); // 🔥 trigger kode pos otomatis
-                                      },
-                                    ),
-
-                                          _textField('Kode Pos', _zipCtrl, innerFieldWidth,
+                                          _dropdownInt('Provinsi *',
+                                              width: innerFieldWidth,
+                                              value: _provCode,
+                                              items: _provinces,
+                                              onChanged: (v) =>
+                                                  _onProvinceChanged(v)),
+                                          _dropdownInt('Kota/Kabupaten *',
+                                              width: innerFieldWidth,
+                                              value: _cityCode,
+                                              items: _cities,
+                                              onChanged: (v) =>
+                                                  _onCityChanged(v)),
+                                          _dropdownInt('Kecamatan *',
+                                              width: innerFieldWidth,
+                                              value: _distCode,
+                                              items: _districts,
+                                              onChanged: (v) =>
+                                                  _onDistrictChanged(v)),
+                                          _dropdownInt(
+                                            'Kelurahan *',
+                                            width: innerFieldWidth,
+                                            value: _villCode,
+                                            items: _villages,
+                                            onChanged: (v) {
+                                              setState(() => _villCode = v);
+                                              if (v != null) {
+                                                _onVillageChanged(
+                                                    v.toString());
+                                              }
+                                            },
+                                          ),
+                                          _textField('Kode Pos', _zipCtrl,
+                                              innerFieldWidth,
                                               keyboard: TextInputType.number),
-                                          _textField('Detail Alamat *', _detailAddrCtrl, innerFieldWidth, maxLines: 3),
+                                          _textField('Detail Alamat *',
+                                              _detailAddrCtrl, innerFieldWidth,
+                                              maxLines: 3),
                                         ],
                                       ),
                                     ],
@@ -546,12 +577,15 @@ Future<void> _onDistrictChanged(int? code) async {
                             // ========= GAMBAR (preview only) =========
                             const Text(
                               'Gambar',
-                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold),
                             ),
                             const SizedBox(height: 10),
                             Container(
                               width: double.infinity,
-                              constraints: const BoxConstraints(minHeight: 150),
+                              constraints:
+                                  const BoxConstraints(minHeight: 150),
                               padding: const EdgeInsets.all(16),
                               decoration: BoxDecoration(
                                 border: Border.all(color: Colors.white54),
@@ -564,7 +598,8 @@ Future<void> _onDistrictChanged(int? code) async {
                                         const SizedBox(height: 12),
                                         const Text(
                                           'Drag & Drop your files or Browse',
-                                          style: TextStyle(color: Colors.white54),
+                                          style:
+                                              TextStyle(color: Colors.white54),
                                           textAlign: TextAlign.center,
                                         ),
                                         const SizedBox(height: 16),
@@ -575,20 +610,24 @@ Future<void> _onDistrictChanged(int? code) async {
                                           children: [
                                             OutlinedButton.icon(
                                               onPressed: _pickFromGallery,
-                                              icon: const Icon(Icons.photo_library),
+                                              icon: const Icon(
+                                                  Icons.photo_library),
                                               label: const Text('Pilih Foto'),
                                               style: OutlinedButton.styleFrom(
                                                 foregroundColor: Colors.white,
-                                                side: const BorderSide(color: Colors.white38),
+                                                side: const BorderSide(
+                                                    color: Colors.white38),
                                               ),
                                             ),
                                             OutlinedButton.icon(
                                               onPressed: _pickFromCamera,
-                                              icon: const Icon(Icons.photo_camera),
+                                              icon: const Icon(
+                                                  Icons.photo_camera),
                                               label: const Text('Kamera'),
                                               style: OutlinedButton.styleFrom(
                                                 foregroundColor: Colors.white,
-                                                side: const BorderSide(color: Colors.white38),
+                                                side: const BorderSide(
+                                                    color: Colors.white38),
                                               ),
                                             ),
                                           ],
@@ -597,22 +636,26 @@ Future<void> _onDistrictChanged(int? code) async {
                                       ],
                                     )
                                   : Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
                                         Wrap(
                                           spacing: 10,
                                           runSpacing: 10,
-                                          children: List.generate(_photos.length, (i) {
+                                          children:
+                                              List.generate(_photos.length,
+                                                  (i) {
                                             final photo = _photos[i];
 
-                                            // 🔥 UPDATED: pakai FutureBuilder agar bisa handle Web & Mobile
                                             return FutureBuilder<Widget>(
                                               future: () async {
                                                 if (kIsWeb) {
-                                                  // 🔥 Web: pakai memory bytes
-                                                  final bytes = await photo.readAsBytes();
+                                                  final bytes = await photo
+                                                      .readAsBytes();
                                                   return ClipRRect(
-                                                    borderRadius: BorderRadius.circular(8),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            8),
                                                     child: Image.memory(
                                                       bytes,
                                                       width: 90,
@@ -621,9 +664,10 @@ Future<void> _onDistrictChanged(int? code) async {
                                                     ),
                                                   );
                                                 } else {
-                                                  // 🔥 Mobile/Desktop: pakai File
                                                   return ClipRRect(
-                                                    borderRadius: BorderRadius.circular(8),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            8),
                                                     child: Image.file(
                                                       File(photo.path),
                                                       width: 90,
@@ -638,7 +682,9 @@ Future<void> _onDistrictChanged(int? code) async {
                                                   return const SizedBox(
                                                     width: 90,
                                                     height: 90,
-                                                    child: Center(child: CircularProgressIndicator()),
+                                                    child: Center(
+                                                        child:
+                                                            CircularProgressIndicator()),
                                                   );
                                                 }
                                                 return Stack(
@@ -648,8 +694,12 @@ Future<void> _onDistrictChanged(int? code) async {
                                                       right: -6,
                                                       top: -6,
                                                       child: IconButton(
-                                                        icon: const Icon(Icons.cancel, color: Colors.redAccent),
-                                                        onPressed: () => _removePhoto(i),
+                                                        icon: const Icon(
+                                                            Icons.cancel,
+                                                            color: Colors
+                                                                .redAccent),
+                                                        onPressed: () =>
+                                                            _removePhoto(i),
                                                       ),
                                                     ),
                                                   ],
@@ -663,21 +713,26 @@ Future<void> _onDistrictChanged(int? code) async {
                                           children: [
                                             OutlinedButton.icon(
                                               onPressed: _pickFromGallery,
-                                              icon: const Icon(Icons.add_photo_alternate),
-                                              label: const Text('Tambah Foto'),
+                                              icon: const Icon(Icons
+                                                  .add_photo_alternate),
+                                              label:
+                                                  const Text('Tambah Foto'),
                                               style: OutlinedButton.styleFrom(
                                                 foregroundColor: Colors.white,
-                                                side: const BorderSide(color: Colors.white38),
+                                                side: const BorderSide(
+                                                    color: Colors.white38),
                                               ),
                                             ),
                                             const SizedBox(width: 10),
                                             OutlinedButton.icon(
                                               onPressed: _pickFromCamera,
-                                              icon: const Icon(Icons.photo_camera),
+                                              icon: const Icon(
+                                                  Icons.photo_camera),
                                               label: const Text('Kamera'),
                                               style: OutlinedButton.styleFrom(
                                                 foregroundColor: Colors.white,
-                                                side: const BorderSide(color: Colors.white38),
+                                                side: const BorderSide(
+                                                    color: Colors.white38),
                                               ),
                                             ),
                                           ],
@@ -685,7 +740,6 @@ Future<void> _onDistrictChanged(int? code) async {
                                       ],
                                     ),
                             ),
-
 
                             const SizedBox(height: 30),
 
@@ -742,7 +796,8 @@ Future<void> _onDistrictChanged(int? code) async {
               filled: true,
               fillColor: const Color(0xFF22344C),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             ),
           ),
         ],
@@ -798,7 +853,8 @@ Future<void> _onDistrictChanged(int? code) async {
             hint: Text(
               loading
                   ? 'Memuat...'
-                  : (list.isEmpty || (list.length == 1 && list.first.id == -1))
+                  : (list.isEmpty ||
+                          (list.length == 1 && list.first.id == -1))
                       ? 'Tidak ada data'
                       : 'Pilih',
               style: const TextStyle(color: Colors.white70),
@@ -808,7 +864,8 @@ Future<void> _onDistrictChanged(int? code) async {
               filled: true,
               fillColor: const Color(0xFF22344C),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             ),
             dropdownColor: Colors.grey[900],
             iconEnabledColor: Colors.white,
@@ -819,7 +876,8 @@ Future<void> _onDistrictChanged(int? code) async {
     );
   }
 
-  Widget _formButton(String text, Color color, VoidCallback? onPressed, {bool showSpinner = false}) {
+  Widget _formButton(String text, Color color, VoidCallback? onPressed,
+      {bool showSpinner = false}) {
     return ElevatedButton(
       onPressed: onPressed,
       style: ElevatedButton.styleFrom(
@@ -828,9 +886,9 @@ Future<void> _onDistrictChanged(int? code) async {
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
       ),
       child: showSpinner
-          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+          ? const SizedBox(
+              width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
           : Text(text),
     );
   }
 }
-
