@@ -1099,22 +1099,71 @@ class ApiService {
     return res.statusCode == 200 || res.statusCode == 201;
   }
 
-  static Future<List<Customer>> fetchCustomers(
-      {int page = 1, int perPage = 20, String? q}) async {
-    final headers = await _authorizedHeaders();
-    final params = <String, String>{
-      'page': '$page',
-      'per_page': '$perPage',
-      if (q != null && q.isNotEmpty) 'filter[search]': q,
-    };
-    final uri = _buildUri('customers', query: params);
-    final res = await http.get(uri, headers: headers);
-    if (res.statusCode != 200) {
-      throw Exception('GET /customers ${res.statusCode}: ${res.body}');
-    }
-    final items = _extractList(_safeDecode(res.body));
-    return items.map(Customer.fromJson).toList();
+  static Future<List<Customer>> fetchCustomers({
+  int page = 1, int perPage = 20, String? q
+}) async {
+  final headers = await _authorizedHeaders();
+  final params = <String, String>{
+    'page': '$page',
+    'per_page': '$perPage',
+    if (q != null && q.isNotEmpty) 'filter[search]': q,
+  };
+  final uri = _buildUri('customers', query: params);
+  final res = await http.get(uri, headers: headers);
+  if (res.statusCode != 200) {
+    throw Exception('GET /customers ${res.statusCode}: ${res.body}');
   }
+
+  final rawList = _extractList(_safeDecode(res.body));
+
+return rawList.map((raw) {
+  final m = Map<String, dynamic>.from(raw);
+
+  // --- Normalisasi image -> List<String> absolut ---
+  final imgs = m['image'] ??
+             m['images'] ??
+             m['photos'] ??
+             m['image_url'] ??
+             m['logo'] ??
+             m['logo_url'] ??
+             m['gambar'] ??
+             m['photo'] ??
+             m['avatar'] ??
+             (m['media']); // untuk spatie media
+
+List<String> urls = [];
+if (imgs is List) {
+  // support list langsung atau list media spatie
+  urls = imgs.map((e) {
+    if (e is Map) {
+      final u = (e['original_url'] ?? e['url'] ?? e['thumb'] ?? '').toString();
+      return _absoluteUrl(u);
+    }
+    return _absoluteUrl(e?.toString());
+  }).where((s) => s.isNotEmpty).toList();
+} else if (imgs is String && imgs.trim().isNotEmpty) {
+  // string bisa berupa JSON array atau single path
+  try {
+    final j = jsonDecode(imgs);
+    if (j is List) {
+      urls = j.map((e) => _absoluteUrl(e?.toString()))
+              .where((s) => s.isNotEmpty)
+              .toList();
+    } else {
+      urls = [_absoluteUrl(imgs)];
+    }
+  } catch (_) {
+    urls = [_absoluteUrl(imgs)];
+  }
+}
+m['image'] = urls; // dipakai Customer.fromJson
+
+
+  return Customer.fromJson(m);
+}).toList();
+
+}
+
 
   // ---------- SALES ORDERS ----------
   static OrderTotals computeTotals({
@@ -1558,11 +1607,24 @@ class ApiService {
   }
 
   static String _absoluteUrl(String? maybe) {
-    if (maybe == null || maybe.isEmpty) return '';
-    if (maybe.startsWith('http://') || maybe.startsWith('https://')) {
-      return maybe;
-    }
-    final path = maybe.startsWith('/') ? maybe : '/$maybe';
-    return '$_origin$path';
+  if (maybe == null) return '';
+  var v = maybe.trim();
+  if (v.isEmpty) return '';
+
+  // sudah absolut
+  if (v.startsWith('http://') || v.startsWith('https://')) return v;
+
+  // normalisasi path
+  if (!v.startsWith('/')) v = '/$v';
+
+  // HANYA ubah jika path dari /public -> /storage
+  if (v.startsWith('/public/')) {
+    v = v.replaceFirst('/public/', '/storage/');
   }
+
+  // selain itu, JANGAN menambahkan /storage
+  return '$_origin$v';
+}
+
+
 }

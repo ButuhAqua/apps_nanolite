@@ -4,6 +4,7 @@ namespace App\Filament\Admin\Resources\CustomerResource\Api\Transformers;
 
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Laravolt\Indonesia\Models\Provinsi;
 use Laravolt\Indonesia\Models\Kabupaten;
 use Laravolt\Indonesia\Models\Kecamatan;
@@ -29,7 +30,7 @@ class CustomerTransformer extends JsonResource
 
         $alamatReadable = $this->mapAddressesReadable($this->address);
 
-        // 🔥 gabungkan alamat lengkap
+        // gabungkan alamat human-readable (baris pertama)
         $alamatFull = null;
         if (!empty($alamatReadable)) {
             $a = $alamatReadable[0];
@@ -40,10 +41,22 @@ class CustomerTransformer extends JsonResource
                 $a['kota_kab']['name'] ?? null,
                 $a['provinsi']['name'] ?? null,
                 $a['kode_pos'] ?? null,
-            ])
-            ->filter(fn($v) => $v && trim($v) !== '-') // buang kosong/strip
-            ->implode(', ');
+            ])->filter(fn ($v) => $v && trim($v) !== '-')->implode(', ');
         }
+
+        // --- gambar -> selalu absolute URL ---
+        $images = collect(
+            is_array($this->image)
+                ? $this->image
+                : (empty($this->image) ? [] : [$this->image])
+        )
+            ->map(function ($v) {
+                $s = is_string($v) ? $v : '';
+                return $this->toAbsoluteUrl($s);
+            })
+            ->filter()
+            ->values()
+            ->all();
 
         return [
             'id'                     => $this->id,
@@ -69,31 +82,57 @@ class CustomerTransformer extends JsonResource
             'program_point'          => (int)($this->jumlah_program ?? 0),
             'reward_point'           => (int)($this->reward_point ?? 0),
 
-            // ✅ fix gambar biar bisa diakses Flutter
-            'image'  => (is_array($this->image) && !empty($this->image))
-                        ? Storage::url($this->image[0])
-                        : (is_string($this->image) ? Storage::url($this->image) : null),
+            // kirim semua format yang ramah klien:
+            'images'                 => $images,            // list gambar absolut
+            'image'                  => $images,            // supaya klien yg baca "image" list juga aman
+            'image_url'              => $images[0] ?? null, // single (first) untuk kemudahan
 
-            'images' => is_array($this->image)
-                        ? collect($this->image)->map(fn($i) => Storage::url($i))->toArray()
-                        : ((is_string($this->image) && !empty($this->image))
-                            ? [Storage::url($this->image)]
-                            : []),
-
-            'status'     => $statusPengajuanLabel,
-            'created_at' => optional($this->created_at)->toDateTimeString(),
-            'updated_at' => optional($this->updated_at)->toDateTimeString(),
+            'status'                 => $statusPengajuanLabel,
+            'created_at'             => optional($this->created_at)->toDateTimeString(),
+            'updated_at'             => optional($this->updated_at)->toDateTimeString(),
         ];
     }
 
-    /* ---------- Helpers: address mapping ---------- */
+    /* ================= Helpers ================= */
+
+    /**
+     * Pastikan path (relatif) menjadi absolute URL dengan host+port dari APP_URL.
+     * - Jika sudah http/https, biarkan (kecuali normalisasi /public -> /storage via Storage::url).
+     * - Jika relatif, gunakan Storage::url lalu prefix config('app.url').
+     */
+    private function toAbsoluteUrl(?string $path): ?string
+    {
+        if (!$path) return null;
+
+        // sudah absolute?
+        if (Str::startsWith($path, ['http://', 'https://'])) {
+            // normalisasi /public -> /storage jika ada
+            $parsed = parse_url($path);
+            $scheme = $parsed['scheme'] ?? 'http';
+            $host   = $parsed['host'] ?? '';
+            $port   = isset($parsed['port']) ? ':' . $parsed['port'] : '';
+            $uri    = ($parsed['path'] ?? '/');
+
+            if (Str::startsWith($uri, '/public/')) {
+                $uri = Str::replaceFirst('/public/', '/storage/', $uri);
+            }
+
+            $query = isset($parsed['query']) ? '?' . $parsed['query'] : '';
+            return "{$scheme}://{$host}{$port}{$uri}{$query}";
+        }
+
+        // relatif -> dapatkan url storage ("/storage/..."), lalu prefix APP_URL
+        $storageUrl = Storage::url(ltrim($path, '/')); // -> "/storage/...."
+        $base = rtrim(config('app.url') ?: url('/'), '/'); // fallback ke helper url() jika APP_URL kosong
+        return $base . $storageUrl;
+    }
+
     private function mapAddressesReadable($address): array
     {
         $items = is_array($address) ? $address : json_decode($address ?? '[]', true);
         if (!is_array($items)) $items = [];
 
         return array_map(function ($a) {
-            // 🔥 ambil dari *_code (sesuai request Flutter)
             $provCode = $a['provinsi_code']  ?? $a['provinsi']  ?? null;
             $kabCode  = $a['kota_kab_code']  ?? $a['kota_kab']  ?? null;
             $kecCode  = $a['kecamatan_code'] ?? $a['kecamatan'] ?? null;
